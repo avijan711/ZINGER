@@ -136,6 +136,12 @@ class PDFViewport(QWidget):
             
             # Draw PDF page if available
             if self.page_pixmap:
+                # Draw page border
+                page_rect = QRectF(0, 0, self.page_pixmap.width(), self.page_pixmap.height())
+                painter.setPen(Qt.GlobalColor.gray)
+                painter.drawRect(page_rect)
+                
+                # Draw page content
                 painter.drawPixmap(0, 0, self.page_pixmap)
             
             # Draw annotations
