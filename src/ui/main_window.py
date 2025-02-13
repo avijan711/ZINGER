@@ -6,6 +6,7 @@ from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtCore import Qt, QSize
 
 from core.pdf_handler import PDFHandler
+from core.share_manager import ShareManager
 from .pdf_view import PDFView
 from .stamp_gallery import StampGallery
 from .dialogs.signature_pad import SignaturePadDialog
@@ -18,6 +19,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.pdf_handler = PDFHandler()
+        self.share_manager = ShareManager()
         
         # Ensure storage directories exist
         STAMPS_DIR.mkdir(parents=True, exist_ok=True)
@@ -111,6 +113,52 @@ class MainWindow(QMainWindow):
         signature_action.setStatusTip("Open signature pad")
         signature_action.triggered.connect(self.show_signature_pad)
         toolbar.addAction(signature_action)
+        
+        toolbar.addSeparator()
+        
+        # Share actions
+        share_action = QAction("Share via Email", self)
+        share_action.setStatusTip("Share via Outlook email")
+        share_action.triggered.connect(self.share_via_email)
+        toolbar.addAction(share_action)
+        
+    def share_via_email(self):
+        """Share the current document via email"""
+        if not self.pdf_handler.document:
+            QMessageBox.warning(
+                self,
+                "Warning",
+                "Please open a document first."
+            )
+            return
+            
+        # Save current document to temporary file
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Document for Sharing",
+            "",
+            f"PDF Files ({SUPPORTED_PDF_FORMATS})"
+        )
+        
+        if file_path:
+            if self.pdf_handler.save_document(file_path):
+                # Share via email
+                if not self.share_manager.share_via_email(
+                    file_path,
+                    "Signed Document",
+                    "Please find attached the signed document."
+                ):
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        "Failed to create email. Please check if Outlook is installed and running."
+                    )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to save the document for sharing."
+                )
 
     def show_signature_pad(self):
         """Show the signature pad dialog"""
