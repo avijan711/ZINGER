@@ -117,10 +117,49 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         
         # Share actions
-        share_action = QAction("Share via Email", self)
-        share_action.setStatusTip("Share via Outlook email")
-        share_action.triggered.connect(self.share_via_email)
-        toolbar.addAction(share_action)
+        email_action = QAction("Share via Email", self)
+        email_action.setStatusTip("Share via Outlook email")
+        email_action.triggered.connect(self.share_via_email)
+        toolbar.addAction(email_action)
+        
+        whatsapp_action = QAction("Share via WhatsApp", self)
+        whatsapp_action.setStatusTip("Share via WhatsApp Web")
+        whatsapp_action.triggered.connect(self.share_via_whatsapp)
+        toolbar.addAction(whatsapp_action)
+        
+    def share_via_whatsapp(self):
+        """Share the current document via WhatsApp"""
+        if not self.pdf_handler.document:
+            QMessageBox.warning(
+                self,
+                "Warning",
+                "Please open a document first."
+            )
+            return
+            
+        # Save current document to temporary file
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Document for Sharing",
+            "",
+            f"PDF Files ({SUPPORTED_PDF_FORMATS})"
+        )
+        
+        if file_path:
+            if self.pdf_handler.save_document(file_path):
+                # Share via WhatsApp
+                if not self.share_manager.share_via_whatsapp(file_path):
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        "Failed to open WhatsApp Web. Please try again."
+                    )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to save the document for sharing."
+                )
         
     def share_via_email(self):
         """Share the current document via email"""
@@ -145,8 +184,8 @@ class MainWindow(QMainWindow):
                 # Share via email
                 if not self.share_manager.share_via_email(
                     file_path,
-                    "Signed Document",
-                    "Please find attached the signed document."
+                    "",  # No default subject
+                    ""   # No default body
                 ):
                     QMessageBox.critical(
                         self,
