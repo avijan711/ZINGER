@@ -7,6 +7,7 @@ from PyQt6.QtGui import (
     QDragMoveEvent, QDropEvent, QPaintEvent, QMouseEvent,
     QContextMenuEvent, QCursor
 )
+from PyQt6.QtCore import QUrl
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize
 from core.pdf_handler import PDFHandler, Annotation
 from PIL import Image
@@ -43,12 +44,39 @@ class PDFViewport(QWidget):
             QSizePolicy.Policy.Expanding
         )
         
-        # Enable mouse tracking for hover effects
+        # Enable mouse tracking and drag/drop
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         
         # Constants
         self.HANDLE_SIZE = 8
         self.MIN_SIZE = 20
+        
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Handle drag enter events for PDF files"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().lower().endswith('.pdf'):
+                    event.acceptProposedAction()
+                    return
+    
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        """Handle drag move events for PDF files"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().lower().endswith('.pdf'):
+                    event.acceptProposedAction()
+                    return
+    
+    def dropEvent(self, event: QDropEvent):
+        """Handle drop events for PDF files"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith('.pdf'):
+                    if self.pdf_handler.open_document(file_path):
+                        event.acceptProposedAction()
+                    return
 
     def update_page_display(self):
         """Update the page display with current zoom"""
