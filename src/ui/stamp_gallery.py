@@ -183,7 +183,8 @@ class StampGallery(QWidget):
             QFrame {
                 background-color: #f8f9fa;
                 border: 1px solid #dee2e6;
-                border-radius: 4px;
+                border-radius: 6px;
+                margin-bottom: 8px;
             }
         """)
         category_layout = QVBoxLayout(category_frame)
@@ -298,7 +299,10 @@ class StampGallery(QWidget):
         self.content.setStyleSheet("""
             QWidget {
                 background-color: white;
-                padding: 10px;
+                padding: 15px;
+            }
+            QWidget > QWidget {  /* Style for stamp thumbnails */
+                margin: 2px;
             }
         """)
         
