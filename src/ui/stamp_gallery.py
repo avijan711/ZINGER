@@ -1,15 +1,16 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QPushButton, QComboBox, QFileDialog,
-    QInputDialog, QMessageBox, QFrame, QGridLayout,
-    QMenu
+    QInputDialog, QMessageBox, QFrame, QMenu
 )
+from .flow_layout import FlowLayout
 from PyQt6.QtGui import QPixmap, QDrag, QImage
 from PyQt6.QtCore import Qt, QMimeData, QSize, QByteArray
 from core.stamp_manager import StampManager
 from pathlib import Path
 import json
 import os
+
 class StampThumbnail(QLabel):
     def __init__(self, stamp_id: str, stamp_data: bytes, name: str, metadata: dict, gallery=None, parent=None):
         super().__init__(parent)
@@ -18,30 +19,64 @@ class StampThumbnail(QLabel):
         self.stamp_name = name
         self.metadata = metadata
         self.gallery = gallery
-        self.metadata = metadata
         
         # Create pixmap from stamp data
         image = QImage.fromData(stamp_data)
         pixmap = QPixmap.fromImage(image)
         
-        # Scale pixmap to thumbnail size
+        # Scale pixmap to thumbnail size (slightly larger for better visibility)
         scaled_pixmap = pixmap.scaled(
-            80, 80,
+            110, 110,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
         
-        # Set pixmap and configure label
-        self.setPixmap(scaled_pixmap)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Configure main widget
         self.setToolTip(name)
-        self.setFixedSize(QSize(100, 100))
+        self.setFixedSize(QSize(140, 160))
+        self.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                padding: 5px;
+            }
+            QWidget:hover {
+                border-color: #0078d4;
+                background-color: #f0f9ff;
+                border-width: 2px;
+                padding: 4px;
+            }
+        """)
         
-        # Add name label
+        # Add name label below the stamp
         self.name_label = QLabel(name, self)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.name_label.setStyleSheet("background-color: rgba(255, 255, 255, 0.8);")
+        self.name_label.setStyleSheet("""
+            QLabel {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 4px 6px;
+                font-size: 11px;
+                color: #333;
+                margin-top: 4px;
+            }
+        """)
         self.name_label.setWordWrap(True)
+        self.name_label.setFixedWidth(120)
+        
+        # Create vertical layout for stamp and label
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(2)
+        
+        # Add stamp image and name label to layout
+        image_label = QLabel(self)
+        image_label.setPixmap(scaled_pixmap)
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(image_label)
+        layout.addWidget(self.name_label)
         
         # Enable mouse tracking
         self.setMouseTracking(True)
@@ -70,20 +105,20 @@ class StampThumbnail(QLabel):
             
             # Execute drag operation
             drag.exec(Qt.DropAction.CopyAction)
+
     def contextMenuEvent(self, event):
         """Handle right-click context menu"""
-        # Create menu
         menu = QMenu(self)
         
         # Add rename action
         rename_action = menu.addAction("Rename")
-        rename_action.triggered.connect(lambda: self._rename_stamp())
+        rename_action.triggered.connect(self._rename_stamp)
         
         menu.addSeparator()
         
         # Add delete action
         delete_action = menu.addAction("Delete")
-        delete_action.triggered.connect(lambda: self._delete_stamp())
+        delete_action.triggered.connect(self._delete_stamp)
         
         # Show menu at cursor position
         menu.exec(event.globalPos())
@@ -137,54 +172,147 @@ class StampGallery(QWidget):
 
     def init_ui(self):
         """Initialize the user interface"""
+        # Main layout with margins and spacing
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(12)
         
-        # Create toolbar
-        toolbar = QHBoxLayout()
+        # Create category section with frame
+        category_frame = QFrame()
+        category_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+            }
+        """)
+        category_layout = QVBoxLayout(category_frame)
+        category_layout.setContentsMargins(8, 8, 8, 8)
+        category_layout.setSpacing(8)
         
-        # Category selector
+        # Category selector with styling
         self.category_combo = QComboBox()
         self.category_combo.addItems(self.stamp_manager.get_categories())
         self.category_combo.currentTextChanged.connect(self.load_stamps)
-        toolbar.addWidget(self.category_combo)
+        self.category_combo.setStyleSheet("""
+            QComboBox {
+                padding: 4px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+                min-height: 24px;
+            }
+            QComboBox:hover {
+                border-color: #0078d4;
+            }
+        """)
+        category_layout.addWidget(self.category_combo)
         
-        # Add category button
+        # Category buttons in horizontal layout
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(4)
+        
+        # Add category button with styling
         add_category_btn = QPushButton("Add Category")
         add_category_btn.clicked.connect(self.add_category)
-        toolbar.addWidget(add_category_btn)
+        add_category_btn.setStyleSheet("""
+            QPushButton {
+                padding: 4px 8px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+                min-height: 24px;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+            }
+        """)
+        button_layout.addWidget(add_category_btn)
         
-        # Remove category button
+        # Remove category button with styling
         remove_category_btn = QPushButton("Remove Category")
         remove_category_btn.clicked.connect(self.remove_category)
-        toolbar.addWidget(remove_category_btn)
+        remove_category_btn.setStyleSheet("""
+            QPushButton {
+                padding: 4px 8px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+                min-height: 24px;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+            }
+        """)
+        button_layout.addWidget(remove_category_btn)
         
-        layout.addLayout(toolbar)
+        category_layout.addLayout(button_layout)
         
-        # Create stamp management toolbar
-        stamp_toolbar = QHBoxLayout()
-        
-        # Import stamp button
+        # Import stamp button with prominent styling
         import_btn = QPushButton("Import Stamp")
         import_btn.clicked.connect(self.import_stamp)
-        stamp_toolbar.addWidget(import_btn)
+        import_btn.setStyleSheet("""
+            QPushButton {
+                padding: 8px;
+                border: 1px solid #0078d4;
+                border-radius: 4px;
+                background-color: #0078d4;
+                color: white;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background-color: #006cbd;
+            }
+        """)
+        category_layout.addWidget(import_btn)
         
-        layout.addLayout(stamp_toolbar)
+        layout.addWidget(category_frame)
         
-        # Create scroll area for stamps
+        # Create scroll area for stamps with styling
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background-color: white;
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+            }
+            QScrollArea QScrollBar:vertical {
+                width: 12px;
+                background: #f8f9fa;
+                border-left: 1px solid #dee2e6;
+            }
+            QScrollArea QScrollBar::handle:vertical {
+                background: #adb5bd;
+                border-radius: 4px;
+                margin: 2px;
+            }
+            QScrollArea QScrollBar::handle:vertical:hover {
+                background: #6c757d;
+            }
+        """)
         
         # Create content widget for scroll area
         self.content = QWidget()
-        self.grid_layout = QGridLayout(self.content)
-        self.grid_layout.setSpacing(10)
+        self.content.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                padding: 10px;
+            }
+        """)
+        
+        # Create flow layout for stamps with optimal spacing
+        self.flow_layout = FlowLayout(self.content, margin=15, spacing=15)
         
         scroll.setWidget(self.content)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, 1)
         
-        # Set fixed width for gallery
-        self.setFixedWidth(300)
+        # Set fixed width for gallery to fit two stamps plus margins
+        self.setFixedWidth(340)  # 2 * (140px thumbnail + 15px margins) + 30px padding
+        
+        # Set fixed width for gallery to fit two stamps plus margins
+        self.setFixedWidth(320)  # 2 * (130px thumbnail + 20px margins) + 20px padding
         
         # Load initial stamps
         self.load_stamps(self.category_combo.currentText())
@@ -192,18 +320,16 @@ class StampGallery(QWidget):
     def load_stamps(self, category: str):
         """Load stamps for the selected category"""
         # Clear existing stamps
-        while self.grid_layout.count():
-            item = self.grid_layout.takeAt(0)
+        while self.flow_layout.count():
+            item = self.flow_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         
         # Load stamps from category
         stamps = self.stamp_manager.get_stamps_by_category(category)
-        for i, stamp in enumerate(stamps):
+        for stamp in stamps:
             stamp_data = self.stamp_manager.get_stamp_data(stamp['id'])
             if stamp_data:
-                row = i // 2  # 2 stamps per row
-                col = i % 2
                 # Create metadata with defaults
                 metadata = {
                     'aspect_ratio': stamp.get('aspect_ratio', 1.0),
@@ -218,7 +344,9 @@ class StampGallery(QWidget):
                     metadata,
                     gallery=self
                 )
-                self.grid_layout.addWidget(thumbnail, row, col)
+                
+                # Add widget to flow layout
+                self.flow_layout.addWidget(thumbnail)
 
     def import_stamp(self):
         """Import a new stamp"""
@@ -277,8 +405,8 @@ class StampGallery(QWidget):
         """Rename the selected stamp"""
         # Get selected stamp
         selected = None
-        for i in range(self.grid_layout.count()):
-            widget = self.grid_layout.itemAt(i).widget()
+        for i in range(self.flow_layout.count()):
+            widget = self.flow_layout.itemAt(i).widget()
             if isinstance(widget, StampThumbnail) and widget.underMouse():
                 selected = widget
                 break
