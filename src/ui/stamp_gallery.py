@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QPushButton, QComboBox, QFileDialog,
-    QInputDialog, QMessageBox, QFrame, QGridLayout
+    QInputDialog, QMessageBox, QFrame, QGridLayout,
+    QMenu
 )
 from PyQt6.QtGui import QPixmap, QDrag, QImage
 from PyQt6.QtCore import Qt, QMimeData, QSize, QByteArray
@@ -9,13 +10,14 @@ from core.stamp_manager import StampManager
 from pathlib import Path
 import json
 import os
-
 class StampThumbnail(QLabel):
-    def __init__(self, stamp_id: str, stamp_data: bytes, name: str, metadata: dict, parent=None):
+    def __init__(self, stamp_id: str, stamp_data: bytes, name: str, metadata: dict, gallery=None, parent=None):
         super().__init__(parent)
         self.stamp_id = stamp_id
         self.stamp_data = stamp_data
         self.stamp_name = name
+        self.metadata = metadata
+        self.gallery = gallery
         self.metadata = metadata
         
         # Create pixmap from stamp data
@@ -68,6 +70,57 @@ class StampThumbnail(QLabel):
             
             # Execute drag operation
             drag.exec(Qt.DropAction.CopyAction)
+    def contextMenuEvent(self, event):
+        """Handle right-click context menu"""
+        # Create menu
+        menu = QMenu(self)
+        
+        # Add rename action
+        rename_action = menu.addAction("Rename")
+        rename_action.triggered.connect(lambda: self._rename_stamp())
+        
+        menu.addSeparator()
+        
+        # Add delete action
+        delete_action = menu.addAction("Delete")
+        delete_action.triggered.connect(lambda: self._delete_stamp())
+        
+        # Show menu at cursor position
+        menu.exec(event.globalPos())
+    
+    def _rename_stamp(self):
+        """Handle rename action"""
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Stamp",
+            "Enter new name:",
+            text=self.stamp_name
+        )
+        
+        if ok and new_name:
+            if not self.gallery.stamp_manager.rename_stamp(self.stamp_id, new_name):
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to rename stamp."
+                )
+    
+    def _delete_stamp(self):
+        """Handle delete action"""
+        reply = QMessageBox.question(
+            self,
+            "Delete Stamp",
+            f"Are you sure you want to delete '{self.stamp_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if not self.gallery.stamp_manager.delete_stamp(self.stamp_id):
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to delete stamp."
+                )
 
 class StampGallery(QWidget):
     def __init__(self, storage_path: str):
@@ -115,16 +168,6 @@ class StampGallery(QWidget):
         import_btn.clicked.connect(self.import_stamp)
         stamp_toolbar.addWidget(import_btn)
         
-        # Delete stamp button
-        delete_btn = QPushButton("Delete Stamp")
-        delete_btn.clicked.connect(self.delete_stamp)
-        stamp_toolbar.addWidget(delete_btn)
-        
-        # Rename stamp button
-        rename_btn = QPushButton("Rename Stamp")
-        rename_btn.clicked.connect(self.rename_stamp)
-        stamp_toolbar.addWidget(rename_btn)
-        
         layout.addLayout(stamp_toolbar)
         
         # Create scroll area for stamps
@@ -161,15 +204,19 @@ class StampGallery(QWidget):
             if stamp_data:
                 row = i // 2  # 2 stamps per row
                 col = i % 2
+                # Create metadata with defaults
+                metadata = {
+                    'aspect_ratio': stamp.get('aspect_ratio', 1.0),
+                    'original_width': stamp.get('original_width', 100),
+                    'original_height': stamp.get('original_height', 100)
+                }
+                
                 thumbnail = StampThumbnail(
                     stamp['id'],
                     stamp_data[0],
                     stamp_data[1],
-                    {
-                        'aspect_ratio': stamp['aspect_ratio'],
-                        'original_width': stamp['original_width'],
-                        'original_height': stamp['original_height']
-                    }
+                    metadata,
+                    gallery=self
                 )
                 self.grid_layout.addWidget(thumbnail, row, col)
 
