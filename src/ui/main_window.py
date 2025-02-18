@@ -1,8 +1,12 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QToolBar, QStatusBar, QFileDialog, QMessageBox
+    QToolBar, QStatusBar, QFileDialog, QMessageBox,
+    QFrame
 )
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtGui import (
+    QAction, QIcon, QDragEnterEvent,
+    QDragMoveEvent, QDropEvent
+)
 from PyQt6.QtCore import Qt, QSize
 
 from core.pdf_handler import PDFHandler
@@ -10,6 +14,7 @@ from core.share_manager import ShareManager
 from .pdf_view import PDFView
 from .stamp_gallery import StampGallery
 from .dialogs.signature_pad import SignaturePadDialog
+from .pdf_drag_source import PDFDragSource
 from config.constants import (
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, TOOLBAR_ICON_SIZE,
     STAMPS_DIR, SIGNATURES_DIR, SUPPORTED_PDF_FORMATS
@@ -34,16 +39,44 @@ class MainWindow(QMainWindow):
 
         # Create central widget and layout
         central_widget = QWidget()
+        central_widget.setAcceptDrops(True)  # Enable drops on central widget
         self.setCentralWidget(central_widget)
-        layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        
+        # Create horizontal layout for main content
+        content_layout = QHBoxLayout()
+        main_layout.addLayout(content_layout)
+        
+        # Enable drops on main window
+        self.setAcceptDrops(True)
 
         # Create stamp gallery
         self.stamp_gallery = StampGallery(str(STAMPS_DIR))
-        layout.addWidget(self.stamp_gallery)
+        content_layout.addWidget(self.stamp_gallery)
 
         # Create PDF view
         self.pdf_view = PDFView(self.pdf_handler)
-        layout.addWidget(self.pdf_view)
+        content_layout.addWidget(self.pdf_view)
+        
+        # Create drag source area
+        self.drag_source = PDFDragSource()
+        self.drag_source.setFixedHeight(80)  # Set fixed height for the drag area
+        
+        # Create a container for the drag source with styling
+        drag_container = QFrame()
+        drag_container.setObjectName("dragContainer")
+        drag_container.setStyleSheet("""
+            QFrame#dragContainer {
+                background-color: #f8f9fa;
+                border-top: 1px solid #dee2e6;
+                padding: 10px;
+            }
+        """)
+        drag_layout = QHBoxLayout(drag_container)
+        drag_layout.addWidget(self.drag_source)
+        
+        # Add drag source container to main layout
+        main_layout.addWidget(drag_container)
 
         # Create toolbar
         self.create_toolbar()
@@ -113,6 +146,31 @@ class MainWindow(QMainWindow):
         signature_action.setStatusTip("Open signature pad")
         signature_action.triggered.connect(self.show_signature_pad)
         toolbar.addAction(signature_action)
+        
+        # Add Sign button with prominent styling
+        sign_action = QAction("Sign", self)
+        sign_action.setStatusTip("Sign and save the document")
+        sign_action.triggered.connect(self.sign_document)
+        sign_action.setProperty("class", "primary")
+        toolbar.addAction(sign_action)
+        
+        # Style the Sign button to make it prominent
+        toolbar.setStyleSheet("""
+            QToolButton[class="primary"] {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 4px;
+                margin: 0 5px;
+            }
+            QToolButton[class="primary"]:hover {
+                background-color: #0056b3;
+            }
+            QToolButton[class="primary"]:pressed {
+                background-color: #004085;
+            }
+        """)
         
         toolbar.addSeparator()
         
@@ -235,6 +293,55 @@ class MainWindow(QMainWindow):
                     "Error",
                     "Failed to save the PDF document."
                 )
+                
+    def sign_document(self):
+        """Sign and save the document automatically"""
+        print("\n=== Signing Document ===")
+        if not self.pdf_handler.document:
+            print("No document loaded")
+            QMessageBox.warning(
+                self,
+                "Warning",
+                "Please open a document first."
+            )
+            return
+            
+        try:
+            # Get the path for the signed document
+            signed_path = self.pdf_handler.get_signed_path()
+            print(f"Generated signed path: {signed_path}")
+            
+            if not signed_path:
+                print("Failed to generate signed path")
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Could not determine save location."
+                )
+                return
+                
+            # Save the document
+            print(f"Attempting to save document to: {signed_path}")
+            if self.pdf_handler.save_document():
+                print("Document saved successfully")
+                self.status_bar.showMessage(f"Document signed and saved to: {signed_path}")
+                # Update drag source with the new file
+                print("Updating drag source with new file")
+                self.drag_source.setPDFPath(signed_path)
+            else:
+                print("Failed to save document")
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to save the signed document."
+                )
+        except Exception as e:
+            print(f"Error during signing: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An error occurred while signing the document: {str(e)}"
+            )
 
     def previous_page(self):
         """Go to the previous page"""
@@ -271,8 +378,11 @@ class MainWindow(QMainWindow):
         """Handle document loaded signal"""
         if success:
             self.status_bar.showMessage("Document loaded successfully")
+            # Reset drag source when new document is loaded
+            self.drag_source.setPDFPath(None)
         else:
             self.status_bar.showMessage("Failed to load document")
+            self.drag_source.setPDFPath(None)
 
     def on_page_changed(self, current: int, total: int):
         """Handle page changed signal"""
@@ -282,3 +392,78 @@ class MainWindow(QMainWindow):
         """Handle zoom changed signal"""
         zoom_percent = int(zoom * 100)
         self.status_bar.showMessage(f"Zoom: {zoom_percent}%")
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Handle drag enter events"""
+        mime_data = event.mimeData()
+        
+        # Accept any drag that has URLs
+        if mime_data.hasUrls():
+            event.acceptProposedAction()
+            return
+            
+        # Accept PDF-related MIME types
+        pdf_mime_types = [
+            "application/x-stamp",
+            "application/pdf",
+            "application/x-pdf",
+            "application/acrobat",
+            "application/vnd.pdf",
+            "text/pdf",
+            "text/x-pdf"
+        ]
+        
+        for mime_type in pdf_mime_types:
+            if mime_data.hasFormat(mime_type):
+                event.acceptProposedAction()
+                return
+                
+        event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        """Handle drag move events"""
+        mime_data = event.mimeData()
+        
+        # Accept any drag that has URLs
+        if mime_data.hasUrls():
+            event.acceptProposedAction()
+            return
+            
+        # Accept PDF-related MIME types
+        pdf_mime_types = [
+            "application/x-stamp",
+            "application/pdf",
+            "application/x-pdf",
+            "application/acrobat",
+            "application/vnd.pdf",
+            "text/pdf",
+            "text/x-pdf"
+        ]
+        
+        for mime_type in pdf_mime_types:
+            if mime_data.hasFormat(mime_type):
+                event.acceptProposedAction()
+                return
+                
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """Handle drop events"""
+        mime_data = event.mimeData()
+        
+        try:
+            # Handle URL drops
+            if mime_data.hasUrls():
+                for url in mime_data.urls():
+                    if url.isLocalFile():
+                        file_path = url.toLocalFile()
+                        if file_path.lower().endswith('.pdf'):
+                            if self.pdf_handler.open_document(file_path):
+                                event.acceptProposedAction()
+                                return
+            
+            # Forward other drops to PDF view
+            self.pdf_view.dropEvent(event)
+        except Exception as e:
+            print(f"Error handling drop event: {e}")
+            event.ignore()

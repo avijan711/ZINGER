@@ -1,4 +1,6 @@
 import fitz
+import os
+import tempfile
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -43,12 +45,10 @@ class PDFHandler(QObject):
             self.undo_stack.clear()
             self.redo_stack.clear()
             
-            # Emit signals
             self.document_loaded.emit(True)
             self.page_changed.emit(0, len(self.document))
             return True
-        except Exception as e:
-            print(f"Error opening document: {e}")
+        except Exception:
             self.document_loaded.emit(False)
             return False
 
@@ -101,7 +101,6 @@ class PDFHandler(QObject):
             return False
 
         try:
-            # Store the action for undo
             undo_action = {
                 'type': 'add_annotation',
                 'annotation': annotation
@@ -109,18 +108,15 @@ class PDFHandler(QObject):
             self.undo_stack.append(undo_action)
             self.redo_stack.clear()
 
-            # Add annotation to the list
             self.annotations.append(annotation)
             self.annotation_added.emit(annotation)
             return True
-        except Exception as e:
-            print(f"Error adding annotation: {e}")
+        except:
             return False
 
     def remove_annotation(self, annotation_id: int) -> bool:
         """Remove an annotation by its ID"""
         if 0 <= annotation_id < len(self.annotations):
-            # Store the action for undo
             undo_action = {
                 'type': 'remove_annotation',
                 'annotation': self.annotations[annotation_id],
@@ -129,7 +125,6 @@ class PDFHandler(QObject):
             self.undo_stack.append(undo_action)
             self.redo_stack.clear()
 
-            # Remove the annotation
             self.annotations.pop(annotation_id)
             self.annotation_removed.emit(annotation_id)
             return True
@@ -167,12 +162,32 @@ class PDFHandler(QObject):
 
         return False
 
-    def save_document(self, path: str) -> bool:
+    def get_signed_path(self) -> Optional[str]:
+        """Get the path where the signed document would be saved"""
+        if not self.document:
+            return None
+            
+        original_path = self.document.name
+        base, ext = os.path.splitext(original_path)
+        
+        # Ensure we're using .pdf extension
+        if not ext.lower() == '.pdf':
+            ext = '.pdf'
+            
+        return f"{base}_signed{ext}"
+
+    def save_document(self, path: Optional[str] = None) -> bool:
         """Save the document with all annotations"""
         if not self.document:
             return False
 
         try:
+            # If no path provided, use automatic naming
+            if path is None:
+                path = self.get_signed_path()
+                if not path:
+                    return False
+
             # Create a copy of the document for saving
             doc_copy = fitz.open()
             doc_copy.insert_pdf(self.document)
@@ -183,16 +198,50 @@ class PDFHandler(QObject):
                 if annotation.type == 'stamp':
                     # Add stamp annotation
                     rect = fitz.Rect(*annotation.rect)
-                    page.insert_image(rect, stream=annotation.content['image_data'])
+                    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                    try:
+                        tmp.write(annotation.content['image_data'])
+                        tmp.flush()
+                        tmp.close()
+                        page.insert_image(rect, filename=tmp.name)
+                    finally:
+                        if os.path.exists(tmp.name):
+                            os.unlink(tmp.name)
                 elif annotation.type == 'signature':
                     # Add signature annotation
                     rect = fitz.Rect(*annotation.rect)
-                    page.insert_image(rect, stream=annotation.content['signature_data'])
+                    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                    try:
+                        tmp.write(annotation.content['signature_data'])
+                        tmp.flush()
+                        tmp.close()
+                        page.insert_image(rect, filename=tmp.name)
+                    finally:
+                        if os.path.exists(tmp.name):
+                            os.unlink(tmp.name)
 
-            # Save the document
-            doc_copy.save(path)
+            # Ensure path has .pdf extension
+            base, ext = os.path.splitext(path)
+            if not ext.lower() == '.pdf':
+                path = base + '.pdf'
+
+            # Save and verify the document
+            doc_copy.save(path, garbage=3, deflate=True, clean=True)
             doc_copy.close()
-            return True
-        except Exception as e:
-            print(f"Error saving document: {e}")
+
+            # Verify the saved file
+            if os.path.exists(path):
+                try:
+                    test_doc = fitz.open(path)
+                    if test_doc.is_pdf:
+                        test_doc.close()
+                        return True
+                    test_doc.close()
+                    os.remove(path)
+                except:
+                    if os.path.exists(path):
+                        os.remove(path)
+                    return False
+            return False
+        except:
             return False

@@ -34,18 +34,30 @@ class ShareManager:
                 print(f"File not found: {file_path}")
                 return False
             
-            # Create new email
-            mail = outlook.CreateItem(0)  # 0 = olMailItem
-            
-            # Set email properties
-            mail.Subject = subject or "Signed Document"
-            mail.Body = body or "Please find attached the signed document."
-            
-            # Add attachment
-            mail.Attachments.Add(os.path.abspath(file_path))
-            
-            # Display the email
-            mail.Display(True)
+            try:
+                # Create new email
+                mail = outlook.CreateItem(0)  # 0 = olMailItem
+                
+                # Set email properties
+                mail.Subject = subject or ""
+                mail.Body = body or ""
+                
+                # Add attachment
+                mail.Attachments.Add(os.path.abspath(file_path))
+                
+                # Display the email
+                mail.Display(True)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "dialog box is open" in error_msg or "תיבת הדו-שיח פתוחה" in error_msg:
+                    QMessageBox.warning(
+                        None,
+                        "Warning",
+                        "Please close any open Outlook windows and try again.\n"
+                        "נא לסגור את כל החלונות הפתוחים של Outlook ולנסות שוב."
+                    )
+                else:
+                    raise  # Re-raise other exceptions
             
             return True
             
@@ -64,7 +76,7 @@ class ShareManager:
             QMessageBox.information(
                 None,
                 "Share via WhatsApp",
-                "Uploading file... Please wait."
+                "Please wait..."
             )
             
             # Upload file to 0x0.st
@@ -81,8 +93,8 @@ class ShareManager:
             # Get download link
             download_link = response.text.strip()
             
-            # Create WhatsApp message with link
-            message = f"Here's your signed document: {download_link}\n(Link expires in 30 days)"
+            # Create WhatsApp message with just the link
+            message = download_link
             
             # Open WhatsApp with the message
             whatsapp_url = f"whatsapp://send?text={quote(message)}"
@@ -94,8 +106,7 @@ class ShareManager:
                 "Share via WhatsApp",
                 "1. WhatsApp will open\n"
                 "2. Select your contact\n"
-                "3. The download link will be shared\n"
-                "Note: Link expires in 30 days"
+                "3. The download link will be shared"
             )
             
             return True

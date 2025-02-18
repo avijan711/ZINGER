@@ -37,3 +37,12 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test files
+*.pdf
+!examples/*.pdf
+
+# Project specific
+.venv/
+stamps/
+stamps_metadata.json
