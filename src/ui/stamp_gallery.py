@@ -1,15 +1,13 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QLabel, QPushButton, QComboBox, QFileDialog,
-    QInputDialog, QMessageBox, QFrame, QMenu
+    QLabel, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
+    QPushButton, QComboBox, QFileDialog, QInputDialog,
+    QMessageBox, QFrame
 )
-from .flow_layout import FlowLayout
 from PyQt6.QtGui import QPixmap, QDrag, QImage
-from PyQt6.QtCore import Qt, QMimeData, QSize, QByteArray
+from PyQt6.QtCore import Qt, QMimeData, QSize, QByteArray, QPoint
 from core.stamp_manager import StampManager
-from pathlib import Path
+from .flow_layout import FlowLayout
 import json
-import os
 
 class StampThumbnail(QLabel):
     def __init__(self, stamp_id: str, stamp_data: bytes, name: str, metadata: dict, gallery=None, parent=None):
@@ -24,62 +22,51 @@ class StampThumbnail(QLabel):
         image = QImage.fromData(stamp_data)
         pixmap = QPixmap.fromImage(image)
         
-        # Scale pixmap to thumbnail size (slightly larger for better visibility)
+        # Scale pixmap to thumbnail size
         scaled_pixmap = pixmap.scaled(
-            110, 110,
+            80, 80,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
         
-        # Configure main widget
+        # Set pixmap and configure label
+        self.setPixmap(scaled_pixmap)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setToolTip(name)
-        self.setFixedSize(QSize(140, 160))
+        self.setFixedSize(QSize(100, 100))
         self.setStyleSheet("""
-            QWidget {
+            QLabel {
                 background-color: white;
                 border: 1px solid #ddd;
-                border-radius: 6px;
-                padding: 5px;
+                border-radius: 4px;
+                padding: 8px;
+                margin: 4px;
             }
-            QWidget:hover {
+            QLabel:hover {
                 border-color: #0078d4;
                 background-color: #f0f9ff;
                 border-width: 2px;
-                padding: 4px;
+                padding: 7px;
             }
         """)
         
-        # Add name label below the stamp
+        # Add name label
         self.name_label = QLabel(name, self)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setStyleSheet("""
             QLabel {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                padding: 4px 6px;
-                font-size: 11px;
+                background-color: rgba(255, 255, 255, 0.95);
+                border-radius: 2px;
+                padding: 2px 4px;
+                font-size: 10px;
                 color: #333;
-                margin-top: 4px;
             }
         """)
         self.name_label.setWordWrap(True)
-        self.name_label.setFixedWidth(120)
+        self.name_label.setMaximumWidth(90)
         
-        # Create vertical layout for stamp and label
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(2)
-        
-        # Add stamp image and name label to layout
-        image_label = QLabel(self)
-        image_label.setPixmap(scaled_pixmap)
-        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(image_label)
-        layout.addWidget(self.name_label)
-        
-        # Enable mouse tracking
-        self.setMouseTracking(True)
+        # Position name label at bottom
+        self.name_label.setGeometry(5, 70, 90, 25)
 
     def mousePressEvent(self, event):
         """Handle mouse press for drag and drop"""
@@ -97,65 +84,20 @@ class StampThumbnail(QLabel):
             drag = QDrag(self)
             drag.setMimeData(mime_data)
             
-            # Create drag pixmap
+            # Create drag pixmap (scaled for better visibility)
             pixmap = self.pixmap()
             if pixmap:
-                drag.setPixmap(pixmap)
-                drag.setHotSpot(event.position().toPoint() - self.rect().topLeft())
+                scaled_pixmap = pixmap.scaled(
+                    64, 64,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                drag.setPixmap(scaled_pixmap)
+                # Center the hotspot
+                drag.setHotSpot(QPoint(scaled_pixmap.width() // 2, scaled_pixmap.height() // 2))
             
-            # Execute drag operation
-            drag.exec(Qt.DropAction.CopyAction)
-
-    def contextMenuEvent(self, event):
-        """Handle right-click context menu"""
-        menu = QMenu(self)
-        
-        # Add rename action
-        rename_action = menu.addAction("Rename")
-        rename_action.triggered.connect(self._rename_stamp)
-        
-        menu.addSeparator()
-        
-        # Add delete action
-        delete_action = menu.addAction("Delete")
-        delete_action.triggered.connect(self._delete_stamp)
-        
-        # Show menu at cursor position
-        menu.exec(event.globalPos())
-    
-    def _rename_stamp(self):
-        """Handle rename action"""
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Rename Stamp",
-            "Enter new name:",
-            text=self.stamp_name
-        )
-        
-        if ok and new_name:
-            if not self.gallery.stamp_manager.rename_stamp(self.stamp_id, new_name):
-                QMessageBox.critical(
-                    self,
-                    "Error",
-                    "Failed to rename stamp."
-                )
-    
-    def _delete_stamp(self):
-        """Handle delete action"""
-        reply = QMessageBox.question(
-            self,
-            "Delete Stamp",
-            f"Are you sure you want to delete '{self.stamp_name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            if not self.gallery.stamp_manager.delete_stamp(self.stamp_id):
-                QMessageBox.critical(
-                    self,
-                    "Error",
-                    "Failed to delete stamp."
-                )
+            # Execute drag operation with both Copy and Move actions
+            drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
 
 class StampGallery(QWidget):
     def __init__(self, storage_path: str):
@@ -183,8 +125,7 @@ class StampGallery(QWidget):
             QFrame {
                 background-color: #f8f9fa;
                 border: 1px solid #dee2e6;
-                border-radius: 6px;
-                margin-bottom: 8px;
+                border-radius: 4px;
             }
         """)
         category_layout = QVBoxLayout(category_frame)
@@ -277,20 +218,7 @@ class StampGallery(QWidget):
             QScrollArea {
                 background-color: white;
                 border: 1px solid #dee2e6;
-                border-radius: 6px;
-            }
-            QScrollArea QScrollBar:vertical {
-                width: 12px;
-                background: #f8f9fa;
-                border-left: 1px solid #dee2e6;
-            }
-            QScrollArea QScrollBar::handle:vertical {
-                background: #adb5bd;
                 border-radius: 4px;
-                margin: 2px;
-            }
-            QScrollArea QScrollBar::handle:vertical:hover {
-                background: #6c757d;
             }
         """)
         
@@ -299,24 +227,18 @@ class StampGallery(QWidget):
         self.content.setStyleSheet("""
             QWidget {
                 background-color: white;
-                padding: 15px;
-            }
-            QWidget > QWidget {  /* Style for stamp thumbnails */
-                margin: 2px;
+                padding: 8px;
             }
         """)
         
-        # Create flow layout for stamps with optimal spacing
-        self.flow_layout = FlowLayout(self.content, margin=15, spacing=15)
+        # Create flow layout for stamps
+        self.flow_layout = FlowLayout(self.content, margin=8, spacing=8)
         
         scroll.setWidget(self.content)
         layout.addWidget(scroll, 1)
         
-        # Set fixed width for gallery to fit two stamps plus margins
-        self.setFixedWidth(340)  # 2 * (140px thumbnail + 15px margins) + 30px padding
-        
-        # Set fixed width for gallery to fit two stamps plus margins
-        self.setFixedWidth(320)  # 2 * (130px thumbnail + 20px margins) + 20px padding
+        # Set fixed width for gallery
+        self.setFixedWidth(300)
         
         # Load initial stamps
         self.load_stamps(self.category_combo.currentText())
@@ -377,58 +299,6 @@ class StampGallery(QWidget):
                         self,
                         "Error",
                         "Failed to import stamp."
-                    )
-
-    def delete_stamp(self):
-        """Delete the selected stamp"""
-        # Get selected stamp
-        selected = None
-        for i in range(self.grid_layout.count()):
-            widget = self.grid_layout.itemAt(i).widget()
-            if isinstance(widget, StampThumbnail) and widget.underMouse():
-                selected = widget
-                break
-        
-        if selected:
-            reply = QMessageBox.question(
-                self,
-                "Delete Stamp",
-                f"Are you sure you want to delete '{selected.stamp_name}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                if not self.stamp_manager.delete_stamp(selected.stamp_id):
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        "Failed to delete stamp."
-                    )
-
-    def rename_stamp(self):
-        """Rename the selected stamp"""
-        # Get selected stamp
-        selected = None
-        for i in range(self.flow_layout.count()):
-            widget = self.flow_layout.itemAt(i).widget()
-            if isinstance(widget, StampThumbnail) and widget.underMouse():
-                selected = widget
-                break
-        
-        if selected:
-            new_name, ok = QInputDialog.getText(
-                self,
-                "Rename Stamp",
-                "Enter new name:",
-                text=selected.stamp_name
-            )
-            
-            if ok and new_name:
-                if not self.stamp_manager.rename_stamp(selected.stamp_id, new_name):
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        "Failed to rename stamp."
                     )
 
     def add_category(self):

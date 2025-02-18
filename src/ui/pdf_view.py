@@ -5,78 +5,302 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import (
     QPainter, QImage, QPixmap, QDragEnterEvent,
     QDragMoveEvent, QDropEvent, QPaintEvent, QMouseEvent,
-    QContextMenuEvent, QCursor
+    QContextMenuEvent, QCursor, QPen, QColor, QPainterPath
 )
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, QTemporaryFile
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize
 from core.pdf_handler import PDFHandler, Annotation
 from PIL import Image
 from io import BytesIO
 import fitz
 import json
+import logging
+from functools import lru_cache
+from typing import Optional, Tuple, List, Dict, Any
+from dataclasses import dataclass
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Constants
+HANDLE_SIZE = 8
+MIN_SIZE = 20
+MAX_CACHE_SIZE = 100
+ZOOM_RANGE = (0.1, 5.0)
+DEFAULT_ZOOM = 1.0
+
+@dataclass
+class ViewportState:
+    """Represents the current state of the viewport"""
+    drag_start_pos: Optional[QPointF] = None
+    drag_start_rect: Optional[QRectF] = None
+    resize_handle: Optional[str] = None
+    selected_annotation: Optional[Annotation] = None
+    hovered_annotation: Optional[Annotation] = None
+
+class AnnotationManager:
+    """Manages annotation operations and state"""
+    
+    def __init__(self):
+        self.annotations: List[Annotation] = []
+        self.state = ViewportState()
+        
+    def add_annotation(self, annotation: Annotation) -> bool:
+        """Add an annotation to the manager"""
+        try:
+            self.annotations.append(annotation)
+            return True
+        except Exception as e:
+            logger.error(f"Error adding annotation: {e}")
+            return False
+            
+    def remove_annotation(self, annotation: Annotation) -> bool:
+        """Remove an annotation from the manager"""
+        try:
+            self.annotations.remove(annotation)
+            return True
+        except ValueError:
+            logger.error(f"Annotation not found")
+            return False
+        except Exception as e:
+            logger.error(f"Error removing annotation: {e}")
+            return False
+            
+    def get_annotation_at_position(self, pos: QPointF, page: int) -> Optional[Annotation]:
+        """Get annotation at the given position"""
+        for annotation in reversed(self.annotations):
+            if annotation.page == page:
+                rect = QRectF(*[float(x) for x in annotation.rect])
+                if rect.contains(pos):
+                    return annotation
+        return None
+
+class ImageCache:
+    """Handles caching of scaled images"""
+    
+    def __init__(self, max_size: int = MAX_CACHE_SIZE):
+        self._cache: Dict[Tuple, QImage] = {}
+        self._max_size = max_size
+        
+    @lru_cache(maxsize=MAX_CACHE_SIZE)
+    def get_scaled_image(self, image_data: bytes, width: int, height: int) -> QImage:
+        """Get a scaled version of the image, using cache if available"""
+        try:
+            with Image.open(BytesIO(image_data)) as img:
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                img = img.resize((width, height), Image.Resampling.LANCZOS)
+                data = img.tobytes("raw", "RGBA")
+                qimg = QImage(
+                    data,
+                    img.width,
+                    img.height,
+                    QImage.Format.Format_RGBA8888
+                )
+                return qimg
+        except Exception as e:
+            logger.error(f"Error scaling image: {e}")
+            return QImage()
 
 class PDFViewport(QWidget):
-    """Widget for rendering PDF pages and handling stamps"""
+    """Widget for rendering PDF pages and handling annotations"""
     
     def __init__(self, pdf_handler: PDFHandler):
         super().__init__()
         self.pdf_handler = pdf_handler
-        self.annotations = []
-        self.selected_annotation = None
-        self.hovered_annotation = None
-        self.resize_handle = None
-        self.drag_start_pos = None
-        self.drag_start_rect = None
-        self.image_cache = {}
-        self.page_pixmap = None
+        self.annotation_manager = AnnotationManager()
+        self.image_cache = ImageCache()
+        self.page_pixmap: Optional[QPixmap] = None
         
-        # Coordinates and dimensions for movement
-        self.start_left = None
-        self.start_top = None
-        self.start_right = None
-        self.start_bottom = None
-        self.start_width = None
-        self.start_height = None
-        
-        # Set size policy
+        # Configure widget
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
-        
-        # Enable mouse tracking and drag/drop
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
+
+    def _draw_drop_zone_indicator(self, painter: QPainter, rect: QRect):
+        """Draw the drop zone indicator when no document is loaded"""
+        # Set up painter for drop zone
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#f8f9fa"))
         
-        # Constants
-        self.HANDLE_SIZE = 8
-        self.MIN_SIZE = 20
+        # Draw rounded rectangle for drop zone
+        drop_rect = rect.adjusted(20, 20, -20, -20)
+        painter.drawRoundedRect(drop_rect, 10, 10)
         
+        # Draw dashed border
+        pen = QPen(QColor("#dee2e6"), 2, Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(drop_rect, 10, 10)
+        
+        # Draw icon
+        icon_size = 64
+        icon_rect = QRect(
+            drop_rect.center().x() - icon_size // 2,
+            drop_rect.center().y() - icon_size // 2 - 30,
+            icon_size,
+            icon_size
+        )
+        
+        # Draw arrow icon
+        painter.setPen(QPen(QColor("#6c757d"), 3))
+        painter.setBrush(QColor("#6c757d"))
+        
+        # Draw arrow
+        arrow_path = QPainterPath()
+        arrow_path.moveTo(icon_rect.center().x(), icon_rect.top())
+        arrow_path.lineTo(icon_rect.center().x(), icon_rect.bottom() - 20)
+        arrow_path.moveTo(icon_rect.center().x() - 15, icon_rect.bottom() - 35)
+        arrow_path.lineTo(icon_rect.center().x(), icon_rect.bottom() - 20)
+        arrow_path.lineTo(icon_rect.center().x() + 15, icon_rect.bottom() - 35)
+        painter.drawPath(arrow_path)
+        
+        # Draw text
+        painter.setPen(QColor("#495057"))
+        font = painter.font()
+        font.setPointSize(12)
+        painter.setFont(font)
+        text_rect = QRect(
+            drop_rect.left(),
+            icon_rect.bottom() + 10,
+            drop_rect.width(),
+            30
+        )
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, "Drop PDF here")
+        
+        font.setPointSize(10)
+        painter.setFont(font)
+        subtext_rect = QRect(
+            drop_rect.left(),
+            text_rect.bottom(),
+            drop_rect.width(),
+            25
+        )
+        painter.drawText(subtext_rect, Qt.AlignmentFlag.AlignCenter, "or click Open to select a file")
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """Handle paint events for the viewport"""
+        try:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            
+            # Draw background
+            painter.fillRect(event.rect(), Qt.GlobalColor.white)
+            
+            if self.page_pixmap:
+                self._render_page(painter)
+                self._render_annotations(painter)
+            else:
+                self._draw_drop_zone_indicator(painter, event.rect())
+                
+        except Exception as e:
+            logger.error(f"Error in paint event: {e}")
+            
+    def _render_page(self, painter: QPainter) -> None:
+        """Render the PDF page"""
+        page_rect = QRectF(0, 0, self.page_pixmap.width(), self.page_pixmap.height())
+        painter.setPen(Qt.GlobalColor.gray)
+        painter.drawRect(page_rect)
+        painter.drawPixmap(0, 0, self.page_pixmap)
+        
+    def _render_annotations(self, painter: QPainter) -> None:
+        """Render all annotations"""
+        for annotation in self.annotation_manager.annotations:
+            if annotation.page == self.pdf_handler.current_page:
+                self._render_annotation(painter, annotation)
+                
+    def _render_annotation(self, painter: QPainter, annotation: Annotation) -> None:
+        """Render a single annotation"""
+        try:
+            # Convert coordinates
+            doc_coords = [float(x) for x in annotation.rect]
+            viewport_rect = QRectF(
+                doc_coords[0] * self.pdf_handler.zoom_level,
+                doc_coords[1] * self.pdf_handler.zoom_level,
+                (doc_coords[2] - doc_coords[0]) * self.pdf_handler.zoom_level,
+                (doc_coords[3] - doc_coords[1]) * self.pdf_handler.zoom_level
+            )
+            
+            if annotation.type == "stamp":
+                # Get scaled image
+                img = self.image_cache.get_scaled_image(
+                    annotation.content["image_data"],
+                    max(1, int(viewport_rect.width())),
+                    max(1, int(viewport_rect.height()))
+                )
+                
+                if not img.isNull():
+                    painter.drawImage(viewport_rect, img)
+                
+                if annotation == self.annotation_manager.state.selected_annotation:
+                    self._draw_selection_handles(painter, viewport_rect)
+                    
+        except Exception as e:
+            logger.error(f"Error rendering annotation: {e}")
+
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """Handle drag enter events for PDF files"""
-        if event.mimeData().hasUrls():
-            for url in event.mimeData().urls():
-                if url.toLocalFile().lower().endswith('.pdf'):
-                    event.acceptProposedAction()
-                    return
+        """Handle drag enter events for PDF files and stamps"""
+        mime_data = event.mimeData()
+        
+        # Handle stamp drops first
+        if mime_data.hasFormat("application/x-stamp"):
+            if self.pdf_handler.document:
+                event.acceptProposedAction()
+                return
+            else:
+                event.ignore()
+                return
+        
+        # Handle Outlook attachments
+        if mime_data.hasFormat("application/x-qt-windows-mime;value=\"FileGroupDescriptorW\""):
+            descriptor_data = mime_data.data("application/x-qt-windows-mime;value=\"FileGroupDescriptorW\"")
+            try:
+                raw_data = bytes(descriptor_data)
+                if len(raw_data) >= 76:
+                    filename_data = raw_data[76:]
+                    null_pos = 0
+                    for i in range(0, len(filename_data)-1, 2):
+                        if filename_data[i] == 0 and filename_data[i+1] == 0:
+                            null_pos = i
+                            break
+                            
+                    if null_pos > 0:
+                        filename = filename_data[:null_pos].decode('utf-16-le')
+                        if filename.lower().endswith('.pdf'):
+                            event.acceptProposedAction()
+                            return
+            except Exception as e:
+                logger.error(f"Error reading descriptor: {e}")
+
+        # Accept any drag that has URLs
+        if mime_data.hasUrls():
+            event.acceptProposedAction()
+            return
+            
+        # Accept PDF-related MIME types
+        accepted_mime_types = [
+            "application/pdf",
+            "application/x-pdf",
+            "application/acrobat",
+            "application/vnd.pdf",
+            "text/pdf",
+            "text/x-pdf"
+        ]
+        
+        for mime_type in accepted_mime_types:
+            if mime_data.hasFormat(mime_type):
+                event.acceptProposedAction()
+                return
+                
+        event.ignore()
     
     def dragMoveEvent(self, event: QDragMoveEvent):
         """Handle drag move events for PDF files"""
-        if event.mimeData().hasUrls():
-            for url in event.mimeData().urls():
-                if url.toLocalFile().lower().endswith('.pdf'):
-                    event.acceptProposedAction()
-                    return
-    
-    def dropEvent(self, event: QDropEvent):
-        """Handle drop events for PDF files"""
-        if event.mimeData().hasUrls():
-            for url in event.mimeData().urls():
-                file_path = url.toLocalFile()
-                if file_path.lower().endswith('.pdf'):
-                    if self.pdf_handler.open_document(file_path):
-                        event.acceptProposedAction()
-                    return
+        self.dragEnterEvent(event)
 
     def update_page_display(self):
         """Update the page display with current zoom"""
@@ -111,97 +335,7 @@ class PDFViewport(QWidget):
             
             self.update()
         except Exception as e:
-            print(f"Error updating page display: {e}")
-
-    def _scale_image(self, image_data: bytes, size: QSize) -> QImage:
-        """Scale image using Pillow for better quality"""
-        try:
-            # Create cache key
-            cache_key = (image_data, size.width(), size.height())
-            
-            # Check cache first
-            if cache_key in self.image_cache:
-                return self.image_cache[cache_key]
-            
-            # Open image with Pillow
-            with Image.open(BytesIO(image_data)) as img:
-                # Convert to RGBA if needed
-                if img.mode != 'RGBA':
-                    img = img.convert('RGBA')
-                
-                # Resize with high quality
-                img = img.resize(
-                    (size.width(), size.height()),
-                    Image.Resampling.LANCZOS
-                )
-                
-                # Convert to QImage
-                data = img.tobytes("raw", "RGBA")
-                qimg = QImage(
-                    data,
-                    img.width,
-                    img.height,
-                    QImage.Format.Format_RGBA8888
-                )
-                
-                # Cache the result
-                self.image_cache[cache_key] = qimg
-                
-                return qimg
-        except Exception as e:
-            print(f"Error scaling image: {e}")
-            return QImage()
-
-    def paintEvent(self, event: QPaintEvent):
-        """Paint the PDF page and annotations"""
-        try:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            
-            # Draw white background
-            painter.fillRect(event.rect(), Qt.GlobalColor.white)
-            
-            # Draw PDF page if available
-            if self.page_pixmap:
-                # Draw page border
-                page_rect = QRectF(0, 0, self.page_pixmap.width(), self.page_pixmap.height())
-                painter.setPen(Qt.GlobalColor.gray)
-                painter.drawRect(page_rect)
-                
-                # Draw page content
-                painter.drawPixmap(0, 0, self.page_pixmap)
-            
-            # Draw annotations
-            for annotation in self.annotations:
-                if annotation.page == self.pdf_handler.current_page:
-                    # Get document space coordinates
-                    doc_coords = [float(x) for x in annotation.rect]
-                    
-                    # Convert to viewport space
-                    viewport_rect = QRectF(
-                        doc_coords[0] * self.pdf_handler.zoom_level,
-                        doc_coords[1] * self.pdf_handler.zoom_level,
-                        (doc_coords[2] - doc_coords[0]) * self.pdf_handler.zoom_level,
-                        (doc_coords[3] - doc_coords[1]) * self.pdf_handler.zoom_level
-                    )
-                    
-                    if annotation.type == "stamp":
-                        # Draw stamp image at viewport scale
-                        img = self._scale_image(
-                            annotation.content["image_data"],
-                            QSize(
-                                int(viewport_rect.width()),
-                                int(viewport_rect.height())
-                            )
-                        )
-                        painter.drawImage(viewport_rect, img)
-                        
-                        # Draw selection handles if selected
-                        if annotation == self.selected_annotation:
-                            self._draw_selection_handles(painter, viewport_rect)
-        except Exception as e:
-            print(f"Error in paint event: {e}")
+            logger.error(f"Error updating page display: {e}")
 
     def _draw_selection_handles(self, painter: QPainter, viewport_rect: QRectF):
         """Draw selection handles on the stamp"""
@@ -210,7 +344,7 @@ class PDFViewport(QWidget):
         painter.drawRect(viewport_rect)
         
         # Calculate handle size in viewport space (constant visual size)
-        handle_size = self.HANDLE_SIZE
+        handle_size = HANDLE_SIZE
         
         # Draw corner handles
         painter.setBrush(Qt.GlobalColor.white)
@@ -232,10 +366,8 @@ class PDFViewport(QWidget):
 
     def _get_resize_handle(self, viewport_pos: QPointF, viewport_rect: QRectF) -> str:
         """Get the resize handle at the given viewport position"""
-        # Handle size is constant in viewport space
-        handle_size = self.HANDLE_SIZE
+        handle_size = HANDLE_SIZE
         
-        # Check corners in viewport space
         corners = [
             (viewport_rect.topLeft(), 'top-left'),
             (viewport_rect.topRight(), 'top-right'),
@@ -254,271 +386,421 @@ class PDFViewport(QWidget):
                 return handle_name
         return None
 
-    def mousePressEvent(self, event: QMouseEvent):
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handle mouse press events"""
-        if event.button() == Qt.MouseButton.LeftButton:
+        try:
+            if event.button() != Qt.MouseButton.LeftButton:
+                return
+                
             pos = event.position()
+            state = self.annotation_manager.state
             
             # Check if clicking on selected annotation's handles
-            if self.selected_annotation:
-                # Get document coordinates
-                doc_coords = [float(x) for x in self.selected_annotation.rect]
+            if state.selected_annotation:
+                doc_coords = [float(x) for x in state.selected_annotation.rect]
+                viewport_rect = self._get_viewport_rect(doc_coords)
                 
-                # Convert to viewport space for hit detection
-                viewport_rect = QRectF(
-                    doc_coords[0] * self.pdf_handler.zoom_level,
-                    doc_coords[1] * self.pdf_handler.zoom_level,
-                    (doc_coords[2] - doc_coords[0]) * self.pdf_handler.zoom_level,
-                    (doc_coords[3] - doc_coords[1]) * self.pdf_handler.zoom_level
-                )
-                
-                # Check for handle hit in viewport space
+                # Check for handle hit
                 handle = self._get_resize_handle(pos, viewport_rect)
                 if handle:
-                    self.resize_handle = handle
-                    self.drag_start_pos = pos
+                    state.resize_handle = handle
+                    state.drag_start_pos = pos
                     
-                    # Store original document space coordinates
-                    self.start_left = doc_coords[0]
-                    self.start_top = doc_coords[1]
-                    self.start_right = doc_coords[2]
-                    self.start_bottom = doc_coords[3]
-                    self.start_width = doc_coords[2] - doc_coords[0]
-                    self.start_height = doc_coords[3] - doc_coords[1]
-                    
-                    print(f"[DEBUG] Resize start - Size: {self.start_width} x {self.start_height}")
+                    # Store exact coordinates for resize operation
+                    state.drag_start_rect = QRectF(
+                        doc_coords[0],
+                        doc_coords[1],
+                        doc_coords[2] - doc_coords[0],
+                        doc_coords[3] - doc_coords[1]
+                    )
                     return
             
-            # Check if clicking on any annotation
-            clicked_annotation = None
-            for annotation in reversed(self.annotations):
-                if annotation.page == self.pdf_handler.current_page:
-                    rect = QRectF(*[float(x) for x in annotation.rect])
-                    if rect.contains(pos):
-                        clicked_annotation = annotation
-                        break
+            # Convert viewport position to document coordinates
+            doc_pos = QPointF(
+                pos.x() / self.pdf_handler.zoom_level,
+                pos.y() / self.pdf_handler.zoom_level
+            )
             
-            self.selected_annotation = clicked_annotation
+            # Check if clicking on any annotation
+            clicked_annotation = self.annotation_manager.get_annotation_at_position(
+                doc_pos, self.pdf_handler.current_page
+            )
+            
             if clicked_annotation:
-                self.drag_start_pos = pos
+                state.selected_annotation = clicked_annotation
+                state.drag_start_pos = pos
                 
-                # Get the current rect coordinates in document space
-                rect_coords = [float(x) / self.pdf_handler.zoom_level for x in clicked_annotation.rect]
-                
-                # Store original coordinates in document space
-                self.start_left = rect_coords[0]
-                self.start_top = rect_coords[1]
-                self.start_right = rect_coords[2]
-                self.start_bottom = rect_coords[3]
-                
-                # Calculate and store original dimensions in document space
-                self.start_width = self.start_right - self.start_left
-                self.start_height = self.start_bottom - self.start_top
-                
-                # Store original rect for drag operation in document space
-                self.drag_start_rect = QRectF(
-                    self.start_left,
-                    self.start_top,
-                    self.start_width,
-                    self.start_height
+                # Store initial rect with exact dimensions
+                rect_coords = [float(x) for x in clicked_annotation.rect]
+                state.drag_start_rect = QRectF(
+                    rect_coords[0],
+                    rect_coords[1],
+                    rect_coords[2] - rect_coords[0],
+                    rect_coords[3] - rect_coords[1]
                 )
-                
-                print(f"[DEBUG] Document space coords: left={self.start_left}, top={self.start_top}")
-                print(f"[DEBUG] Document space dimensions: {self.start_width} x {self.start_height}")
-                
-                print(f"[DEBUG] Original coords: left={self.start_left}, top={self.start_top}, right={self.start_right}, bottom={self.start_bottom}")
-                print(f"[DEBUG] Original dimensions: {self.start_width} x {self.start_height}")
-                print(f"[DEBUG] Click position: ({pos.x()}, {pos.y()})")
+            else:
+                state.selected_annotation = None
             
             self.update()
+            
+        except Exception as e:
+            logger.error(f"Error in mouse press event: {e}")
+            
+    def _get_viewport_rect(self, doc_coords: List[float]) -> QRectF:
+        """Convert document coordinates to viewport coordinates"""
+        return QRectF(
+            doc_coords[0] * self.pdf_handler.zoom_level,
+            doc_coords[1] * self.pdf_handler.zoom_level,
+            (doc_coords[2] - doc_coords[0]) * self.pdf_handler.zoom_level,
+            (doc_coords[3] - doc_coords[1]) * self.pdf_handler.zoom_level
+        )
 
-    def mouseMoveEvent(self, event: QMouseEvent):
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Handle mouse move events"""
-        pos = event.position()
-        
-        # Handle hover effects
-        self._handle_hover(pos)
-        
-        # Handle dragging
-        if event.buttons() & Qt.MouseButton.LeftButton and self.drag_start_pos and self.selected_annotation:
-            if self.resize_handle:
-                self._handle_resize(pos)
-            else:
-                self._handle_move(pos)
+        try:
+            pos = event.position()
+            state = self.annotation_manager.state
+            
+            # Handle hover effects
+            self._handle_hover(pos)
+            
+            # Handle dragging
+            if (event.buttons() & Qt.MouseButton.LeftButton and
+                state.drag_start_pos and state.selected_annotation):
+                
+                if state.resize_handle:
+                    self._handle_resize(pos)
+                else:
+                    self._handle_move(pos)
+                    
+        except Exception as e:
+            logger.error(f"Error in mouse move event: {e}")
 
-    def _handle_hover(self, pos: QPointF):
+    def _handle_hover(self, pos: QPointF) -> None:
         """Handle hover effects"""
-        hovered = None
-        for annotation in reversed(self.annotations):
-            if annotation.page == self.pdf_handler.current_page:
-                rect = QRectF(*[float(x) for x in annotation.rect])
-                if rect.contains(pos):
-                    hovered = annotation
-                    if "name" in annotation.content:
-                        QToolTip.showText(
-                            self.mapToGlobal(pos.toPoint()),
-                            annotation.content["name"]
-                        )
-                    break
+        # Convert viewport position to document coordinates
+        doc_pos = QPointF(
+            pos.x() / self.pdf_handler.zoom_level,
+            pos.y() / self.pdf_handler.zoom_level
+        )
         
-        if hovered != self.hovered_annotation:
-            self.hovered_annotation = hovered
-            if not hovered:
+        hovered = self.annotation_manager.get_annotation_at_position(
+            doc_pos, self.pdf_handler.current_page
+        )
+        
+        state = self.annotation_manager.state
+        if hovered != state.hovered_annotation:
+            state.hovered_annotation = hovered
+            if hovered and "name" in hovered.content:
+                QToolTip.showText(
+                    self.mapToGlobal(pos.toPoint()),
+                    hovered.content["name"]
+                )
+            else:
                 QToolTip.hideText()
 
-    def _handle_resize(self, pos: QPointF):
+    def _handle_resize(self, pos: QPointF) -> None:
         """Handle resize operations"""
         try:
+            state = self.annotation_manager.state
+            if not state.drag_start_pos or not state.drag_start_rect or not state.selected_annotation:
+                return
+
             # Get viewport delta
-            viewport_delta = pos - self.drag_start_pos
+            viewport_delta = pos - state.drag_start_pos
             
             # Convert to document space
             doc_delta_x = viewport_delta.x() / self.pdf_handler.zoom_level
             doc_delta_y = viewport_delta.y() / self.pdf_handler.zoom_level
             
+            # Get original dimensions
+            orig_rect = state.drag_start_rect
+            orig_width = orig_rect.width()
+            orig_height = orig_rect.height()
+            
             # Get aspect ratio
-            aspect_ratio = self.selected_annotation.content.get('aspect_ratio', 1.0)
+            aspect_ratio = state.selected_annotation.content.get('aspect_ratio', 1.0)
             
-            # Calculate new size in document space
-            if self.resize_handle == 'bottom-right':
-                new_width = self.start_width + doc_delta_x
+            # Calculate new size based on handle
+            if state.resize_handle == 'bottom-right':
+                new_width = max(MIN_SIZE, orig_width + doc_delta_x)
                 new_height = new_width / aspect_ratio
-                new_rect = (
-                    self.start_left,
-                    self.start_top,
-                    self.start_left + new_width,
-                    self.start_top + new_height
+                new_rect = QRectF(
+                    orig_rect.left(),
+                    orig_rect.top(),
+                    new_width,
+                    new_height
                 )
-            elif self.resize_handle == 'top-left':
-                new_width = self.start_width - doc_delta_x
+            elif state.resize_handle == 'top-left':
+                new_width = max(MIN_SIZE, orig_width - doc_delta_x)
                 new_height = new_width / aspect_ratio
-                new_rect = (
-                    self.start_right - new_width,
-                    self.start_bottom - new_height,
-                    self.start_right,
-                    self.start_bottom
+                new_rect = QRectF(
+                    orig_rect.right() - new_width,
+                    orig_rect.bottom() - new_height,
+                    new_width,
+                    new_height
                 )
-            elif self.resize_handle == 'bottom-left':
-                new_width = self.start_width - doc_delta_x
+            elif state.resize_handle == 'bottom-left':
+                new_width = max(MIN_SIZE, orig_width - doc_delta_x)
                 new_height = new_width / aspect_ratio
-                new_rect = (
-                    self.start_right - new_width,
-                    self.start_top,
-                    self.start_right,
-                    self.start_top + new_height
+                new_rect = QRectF(
+                    orig_rect.right() - new_width,
+                    orig_rect.top(),
+                    new_width,
+                    new_height
                 )
-            elif self.resize_handle == 'top-right':
-                new_width = self.start_width + doc_delta_x
+            elif state.resize_handle == 'top-right':
+                new_width = max(MIN_SIZE, orig_width + doc_delta_x)
                 new_height = new_width / aspect_ratio
-                new_rect = (
-                    self.start_left,
-                    self.start_bottom - new_height,
-                    self.start_left + new_width,
-                    self.start_bottom
+                new_rect = QRectF(
+                    orig_rect.left(),
+                    orig_rect.bottom() - new_height,
+                    new_width,
+                    new_height
                 )
+            else:
+                return
             
-            # Ensure minimum size in document space
-            min_size = self.MIN_SIZE / self.pdf_handler.zoom_level
-            if new_rect[2] - new_rect[0] >= min_size and new_rect[3] - new_rect[1] >= min_size:
-                print(f"[DEBUG] Resize - New size: {new_rect[2] - new_rect[0]} x {new_rect[3] - new_rect[1]}")
-                self.selected_annotation.rect = new_rect
+            # Check minimum size
+            min_size = MIN_SIZE / self.pdf_handler.zoom_level
+            if new_rect.width() >= min_size and new_rect.height() >= min_size:
+                # Update annotation with new rect
+                state.selected_annotation.rect = (
+                    new_rect.left(),
+                    new_rect.top(),
+                    new_rect.right(),
+                    new_rect.bottom()
+                )
                 self.update()
+                
         except Exception as e:
-            print(f"Error handling resize: {e}")
+            logger.error(f"Error handling resize: {e}")
 
-    def _handle_move(self, pos: QPointF):
+    def _handle_move(self, pos: QPointF) -> None:
         """Handle move operations"""
         try:
-            # Get the movement in viewport coordinates
-            viewport_delta = pos - self.drag_start_pos
+            state = self.annotation_manager.state
+            if not state.drag_start_pos or not state.drag_start_rect or not state.selected_annotation:
+                return
+
+            # Get viewport delta
+            viewport_delta = pos - state.drag_start_pos
             
-            # Convert to document coordinates using zoom level
+            # Convert to document coordinates
             doc_delta_x = viewport_delta.x() / self.pdf_handler.zoom_level
             doc_delta_y = viewport_delta.y() / self.pdf_handler.zoom_level
             
-            print(f"[DEBUG] Viewport delta: ({viewport_delta.x()}, {viewport_delta.y()})")
-            print(f"[DEBUG] Document delta: ({doc_delta_x}, {doc_delta_y})")
+            # Calculate new position while maintaining dimensions
+            orig_rect = state.drag_start_rect
             
-            # Apply movement in document coordinates
-            new_rect = (
-                self.start_left + doc_delta_x,
-                self.start_top + doc_delta_y,
-                self.start_left + doc_delta_x + self.start_width,  # Maintain exact width
-                self.start_top + doc_delta_y + self.start_height   # Maintain exact height
+            # Calculate new position
+            new_left = orig_rect.left() + doc_delta_x
+            new_top = orig_rect.top() + doc_delta_y
+            
+            # Maintain exact width and height
+            new_rect = QRectF(
+                new_left,
+                new_top,
+                orig_rect.width(),
+                orig_rect.height()
             )
             
-            print(f"[DEBUG] Moving from ({self.start_left}, {self.start_top})")
-            print(f"[DEBUG] Moving to ({new_rect[0]}, {new_rect[1]})")
-            print(f"[DEBUG] Width: {new_rect[2] - new_rect[0]} (original: {self.start_width})")
-            print(f"[DEBUG] Height: {new_rect[3] - new_rect[1]} (original: {self.start_height})")
-            
-            # Update position while maintaining exact dimensions
-            self.selected_annotation.rect = new_rect
+            # Update annotation position
+            state.selected_annotation.rect = (
+                new_rect.left(),
+                new_rect.top(),
+                new_rect.left() + orig_rect.width(),
+                new_rect.top() + orig_rect.height()
+            )
             self.update()
+            
         except Exception as e:
-            print(f"Error handling move: {e}")
+            logger.error(f"Error handling move: {e}")
 
-    def mouseReleaseEvent(self, event: QMouseEvent):
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Handle mouse release events"""
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self.selected_annotation:
-                # Get the final rect coordinates
-                final_coords = [float(x) for x in self.selected_annotation.rect]
-                final_width = final_coords[2] - final_coords[0]
-                final_height = final_coords[3] - final_coords[1]
+        try:
+            if event.button() == Qt.MouseButton.LeftButton:
+                # Reset viewport state
+                state = self.annotation_manager.state
+                state.drag_start_pos = None
+                state.drag_start_rect = None
+                state.resize_handle = None
                 
-                # Compare with starting dimensions
-                if self.drag_start_rect:
-                    print(f"[DEBUG] Release - Final position: ({final_coords[0]}, {final_coords[1]})")
-                    print(f"[DEBUG] Release - Final dimensions: {final_width} x {final_height}")
-                    print(f"[DEBUG] Release - Start dimensions were: {self.drag_start_rect.width()} x {self.drag_start_rect.height()}")
-                    print(f"[DEBUG] Release - Dimension changes: {final_width - self.drag_start_rect.width()} x {final_height - self.drag_start_rect.height()}")
+        except Exception as e:
+            logger.error(f"Error in mouse release event: {e}")
+    
+    def dropEvent(self, event: QDropEvent):
+        """Handle drop events for PDF files and stamps"""
+        try:
+            mime_data = event.mimeData()
             
-            print("[DEBUG] Cleaning up movement state")
-            # Clear all movement state
-            self.drag_start_pos = None
-            self.drag_start_rect = None
-            self.resize_handle = None
+            # Handle stamp drops first
+            if mime_data.hasFormat("application/x-stamp"):
+                if not self.pdf_handler.document:
+                    event.ignore()
+                    return
+                
+                # Get stamp data and metadata
+                stamp_data = mime_data.data("application/x-stamp")
+                metadata_data = mime_data.data("application/x-stamp-metadata")
+                if not stamp_data:
+                    event.ignore()
+                    return
+                
+                stamp_name = mime_data.text()
+                stamp_bytes = bytes(stamp_data.data())
+                
+                # Parse metadata if available
+                try:
+                    if metadata_data:
+                        metadata = json.loads(bytes(metadata_data.data()).decode('utf-8'))
+                        original_width = metadata.get('original_width', 100)
+                        original_height = metadata.get('original_height', 100)
+                        aspect_ratio = metadata.get('aspect_ratio', 1.0)
+                    else:
+                        # Fallback to image dimensions if no metadata
+                        img = QImage.fromData(stamp_bytes)
+                        if img.isNull():
+                            event.ignore()
+                            return
+                        original_width = img.width()
+                        original_height = img.height()
+                        aspect_ratio = original_width / original_height
+                    
+                    # Get drop position
+                    pos = event.position()
+                    
+                    # Convert to document coordinates
+                    doc_x = pos.x() / self.pdf_handler.zoom_level
+                    doc_y = pos.y() / self.pdf_handler.zoom_level
+                    
+                    # Scale to a reasonable initial size (e.g. 100px width)
+                    target_width = 100
+                    scale_factor = target_width / original_width
+                    
+                    # Calculate size in document space
+                    doc_width = (original_width * scale_factor) / self.pdf_handler.zoom_level
+                    doc_height = (original_height * scale_factor) / self.pdf_handler.zoom_level
+                except Exception as e:
+                    logger.error(f"Error processing stamp data: {e}")
+                    event.ignore()
+                    return
+                
+                # Create annotation with document space coordinates
+                annotation = Annotation(
+                    type="stamp",
+                    rect=(
+                        doc_x,
+                        doc_y,
+                        doc_x + doc_width,
+                        doc_y + doc_height
+                    ),
+                    content={
+                        "image_data": stamp_bytes,
+                        "name": stamp_name,
+                        "aspect_ratio": float(aspect_ratio),
+                        "original_width": float(original_width),
+                        "original_height": float(original_height),
+                        "scale_factor": float(scale_factor)
+                    },
+                    page=self.pdf_handler.current_page
+                )
+                
+                # Add annotation
+                if self.pdf_handler.add_annotation(annotation):
+                    event.setDropAction(Qt.DropAction.CopyAction)
+                    event.accept()
+                    self.update()
+                    return
+                else:
+                    event.ignore()
+                    return
             
-            # Clear coordinate tracking
-            self.start_left = None
-            self.start_top = None
-            self.start_right = None
-            self.start_bottom = None
-            self.start_width = None
-            self.start_height = None
+            # Handle Outlook attachments
+            if mime_data.hasFormat("application/x-qt-windows-mime;value=\"FileGroupDescriptorW\""):
+                descriptor_data = mime_data.data("application/x-qt-windows-mime;value=\"FileGroupDescriptorW\"")
+                file_contents = mime_data.data("application/x-qt-windows-mime;value=\"FileContents\"")
+                
+                if descriptor_data and file_contents:
+                    try:
+                        raw_descriptor = bytes(descriptor_data)
+                        raw_contents = bytes(file_contents)
+                        
+                        if len(raw_descriptor) >= 76:
+                            filename_data = raw_descriptor[76:]
+                            null_pos = 0
+                            for i in range(0, len(filename_data)-1, 2):
+                                if filename_data[i] == 0 and filename_data[i+1] == 0:
+                                    null_pos = i
+                                    break
+                                    
+                            if null_pos > 0:
+                                filename = filename_data[:null_pos].decode('utf-16-le')
+                                if filename.lower().endswith('.pdf'):
+                                    temp_file = QTemporaryFile(self)
+                                    if temp_file.open():
+                                        temp_file.write(raw_contents)
+                                        temp_file.close()
+                                        if self.pdf_handler.open_document(temp_file.fileName()):
+                                            event.acceptProposedAction()
+                                            return
+                    except Exception as e:
+                        logger.error(f"Error handling Outlook attachment: {e}")
+            
+            # Handle file drops (for PDFs)
+            if mime_data.hasUrls():
+                for url in mime_data.urls():
+                    if url.isLocalFile():
+                        file_path = url.toLocalFile()
+                        if file_path.lower().endswith('.pdf'):
+                            if self.pdf_handler.open_document(file_path):
+                                event.acceptProposedAction()
+                                return
+            
+            event.ignore()
+        except Exception as e:
+            logger.error(f"Error in dropEvent: {e}")
+            event.ignore()
 
-    def contextMenuEvent(self, event: QContextMenuEvent):
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """Handle context menu events"""
-        pos = event.pos()
-        
-        # Find annotation under cursor
-        clicked_annotation = None
-        for annotation in reversed(self.annotations):
-            if annotation.page == self.pdf_handler.current_page:
-                rect = QRectF(*[float(x) for x in annotation.rect])
-                if rect.contains(QPointF(pos)):
-                    clicked_annotation = annotation
-                    break
-        
-        if clicked_annotation:
-            menu = QMenu(self)
-            remove_action = menu.addAction("Remove")
-            remove_action.triggered.connect(
-                lambda: self._remove_annotation(clicked_annotation)
+        try:
+            pos = event.pos()
+            
+            # Convert to document coordinates
+            doc_pos = QPointF(
+                pos.x() / self.pdf_handler.zoom_level,
+                pos.y() / self.pdf_handler.zoom_level
             )
-            menu.exec(event.globalPos())
+            
+            # Find annotation under cursor
+            clicked_annotation = self.annotation_manager.get_annotation_at_position(
+                doc_pos, self.pdf_handler.current_page
+            )
+            
+            if clicked_annotation:
+                menu = QMenu(self)
+                remove_action = menu.addAction("Remove")
+                remove_action.triggered.connect(
+                    lambda: self._remove_annotation(clicked_annotation)
+                )
+                menu.exec(event.globalPos())
+                
+        except Exception as e:
+            logger.error(f"Error in context menu event: {e}")
 
-    def _remove_annotation(self, annotation):
+    def _remove_annotation(self, annotation: Annotation) -> None:
         """Remove an annotation"""
         try:
-            index = self.annotations.index(annotation)
+            index = self.annotation_manager.annotations.index(annotation)
             if self.pdf_handler.remove_annotation(index):
-                if annotation == self.selected_annotation:
-                    self.selected_annotation = None
+                if annotation == self.annotation_manager.state.selected_annotation:
+                    self.annotation_manager.state.selected_annotation = None
+                self.annotation_manager.remove_annotation(annotation)
                 self.update()
         except Exception as e:
-            print(f"Error removing annotation: {e}")
+            logger.error(f"Error removing annotation: {e}")
 
 class PDFView(QScrollArea):
     """Scrollable container for PDF viewport"""
@@ -542,97 +824,28 @@ class PDFView(QScrollArea):
         self.pdf_handler.annotation_added.connect(self.on_annotation_added)
         self.pdf_handler.annotation_removed.connect(self.on_annotation_removed)
 
-    def on_document_loaded(self, success: bool):
+    def on_document_loaded(self, success: bool) -> None:
         """Handle document loaded signal"""
         if success:
             self.viewport_widget.update_page_display()
 
-    def on_page_changed(self, current: int, total: int):
+    def on_page_changed(self) -> None:
         """Handle page changed signal"""
         self.viewport_widget.update_page_display()
 
-    def on_zoom_changed(self, zoom: float):
+    def on_zoom_changed(self) -> None:
         """Handle zoom changed signal"""
         self.viewport_widget.update_page_display()
 
-    def on_annotation_added(self, annotation: Annotation):
+    def on_annotation_added(self, annotation) -> None:
         """Handle annotation added signal"""
-        try:
-            self.viewport_widget.annotations.append(annotation)
-            self.viewport_widget.update()
-        except Exception as e:
-            print(f"Error adding annotation: {e}")
+        self.viewport_widget.annotation_manager.add_annotation(annotation)
+        self.viewport_widget.update()
 
-    def on_annotation_removed(self, annotation_id: int):
+    def on_annotation_removed(self, index: int) -> None:
         """Handle annotation removed signal"""
-        try:
-            if 0 <= annotation_id < len(self.viewport_widget.annotations):
-                self.viewport_widget.annotations.pop(annotation_id)
-                self.viewport_widget.update()
-        except Exception as e:
-            print(f"Error removing annotation: {e}")
+        if 0 <= index < len(self.viewport_widget.annotation_manager.annotations):
+            annotation = self.viewport_widget.annotation_manager.annotations[index]
+            self.viewport_widget.annotation_manager.remove_annotation(annotation)
+            self.viewport_widget.update()
 
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        """Handle drag enter events"""
-        if event.mimeData().hasFormat("application/x-stamp"):
-            event.acceptProposedAction()
-
-    def dragMoveEvent(self, event: QDragMoveEvent):
-        """Handle drag move events"""
-        if event.mimeData().hasFormat("application/x-stamp"):
-            event.acceptProposedAction()
-
-    def dropEvent(self, event: QDropEvent):
-        """Handle drop events"""
-        try:
-            if event.mimeData().hasFormat("application/x-stamp"):
-                # Get stamp data
-                stamp_data = event.mimeData().data("application/x-stamp")
-                stamp_name = event.mimeData().text()
-                
-                # Create image to get dimensions
-                img = QImage.fromData(bytes(stamp_data.data()))
-                aspect_ratio = img.width() / img.height()
-                
-                # Get viewport position
-                viewport_pos = self.viewport_widget.mapFrom(
-                    self,
-                    event.position().toPoint()
-                )
-                
-                # Convert to document coordinates
-                doc_x = viewport_pos.x() / self.viewport_widget.pdf_handler.zoom_level
-                doc_y = viewport_pos.y() / self.viewport_widget.pdf_handler.zoom_level
-                
-                # Calculate initial size in document space
-                doc_width = 100 / self.viewport_widget.pdf_handler.zoom_level
-                doc_height = doc_width / aspect_ratio
-                
-                print(f"[DEBUG] Drop - Viewport pos: ({viewport_pos.x()}, {viewport_pos.y()})")
-                print(f"[DEBUG] Drop - Document pos: ({doc_x}, {doc_y})")
-                print(f"[DEBUG] Drop - Document size: {doc_width} x {doc_height}")
-                
-                # Create annotation with document space coordinates
-                annotation = Annotation(
-                    type="stamp",
-                    rect=(
-                        doc_x,
-                        doc_y,
-                        doc_x + doc_width,
-                        doc_y + doc_height
-                    ),
-                    content={
-                        "image_data": bytes(stamp_data.data()),
-                        "name": stamp_name,
-                        "aspect_ratio": aspect_ratio,
-                        "original_width": doc_width,
-                        "original_height": doc_height
-                    },
-                    page=self.pdf_handler.current_page
-                )
-                
-                # Add annotation
-                self.pdf_handler.add_annotation(annotation)
-                event.acceptProposedAction()
-        except Exception as e:
-            print(f"Error handling drop event: {e}")
