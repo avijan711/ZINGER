@@ -131,19 +131,19 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         # Zoom actions
-        zoom_in = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton), "Zoom In", self)
+        zoom_in = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton), "Zoom In (+)", self)
         zoom_in.setStatusTip("Zoom in (Ctrl++)")
         zoom_in.setShortcut("Ctrl++")
         zoom_in.triggered.connect(self.zoom_in)
         toolbar.addAction(zoom_in)
 
-        zoom_out = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton), "Zoom Out", self)
+        zoom_out = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton), "Zoom Out (-)", self)
         zoom_out.setStatusTip("Zoom out (Ctrl+-)")
         zoom_out.setShortcut("Ctrl+-")
         zoom_out.triggered.connect(self.zoom_out)
         toolbar.addAction(zoom_out)
 
-        fit_width = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton), "Fit Width", self)
+        fit_width = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown), "Fit Width", self)
         fit_width.setStatusTip("Fit to width (Ctrl+W)")
         fit_width.setShortcut("Ctrl+W")
         fit_width.triggered.connect(self.fit_width)
@@ -172,13 +172,13 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         
         # Share actions
-        email_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation), "Share via Email", self)
+        email_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveFDIcon), "Share via Outlook", self)
         email_action.setStatusTip("Share via Outlook email (Ctrl+E)")
         email_action.setShortcut("Ctrl+E")
         email_action.triggered.connect(self.share_via_email)
         toolbar.addAction(email_action)
         
-        whatsapp_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxQuestion), "Share via WhatsApp", self)
+        whatsapp_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon), "Share Online", self)
         whatsapp_action.setStatusTip("Share via WhatsApp Web (Ctrl+W)")
         whatsapp_action.setShortcut("Ctrl+W")
         whatsapp_action.triggered.connect(self.share_via_whatsapp)
