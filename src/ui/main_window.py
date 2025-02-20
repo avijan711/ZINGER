@@ -8,11 +8,19 @@ from PyQt6.QtGui import (
     QDragMoveEvent, QDropEvent
 )
 from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
+from pathlib import Path
 
 from config.styles import (
     TOOLBAR_STYLE, SIGN_BUTTON_STYLE, DROP_ZONE_STYLE,
     STATUS_BAR_STYLE, TOOLBAR_ICON_SIZE, LARGE_ICON_SIZE
 )
+
+def load_icon(name: str) -> QIcon:
+    """Load an icon from the assets directory"""
+    icon_path = Path(__file__).parent.parent / 'assets' / 'icons' / f"{name}.png"
+    if icon_path.exists():
+        return QIcon(str(icon_path))
+    return QIcon()
 
 from core.pdf_handler import PDFHandler
 from core.share_manager import ShareManager
@@ -131,13 +139,13 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         # Zoom actions
-        zoom_in = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton), "Zoom In (+)", self)
+        zoom_in = QAction(load_icon('zoom_in'), "Zoom In (+)", self)
         zoom_in.setStatusTip("Zoom in (Ctrl++)")
         zoom_in.setShortcut("Ctrl++")
         zoom_in.triggered.connect(self.zoom_in)
         toolbar.addAction(zoom_in)
 
-        zoom_out = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton), "Zoom Out (-)", self)
+        zoom_out = QAction(load_icon('zoom_out'), "Zoom Out (-)", self)
         zoom_out.setStatusTip("Zoom out (Ctrl+-)")
         zoom_out.setShortcut("Ctrl+-")
         zoom_out.triggered.connect(self.zoom_out)
@@ -172,13 +180,13 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         
         # Share actions
-        email_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveFDIcon), "Share via Outlook", self)
+        email_action = QAction(load_icon('outlook'), "Share via Outlook", self)
         email_action.setStatusTip("Share via Outlook email (Ctrl+E)")
         email_action.setShortcut("Ctrl+E")
         email_action.triggered.connect(self.share_via_email)
         toolbar.addAction(email_action)
         
-        whatsapp_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon), "Share Online", self)
+        whatsapp_action = QAction(load_icon('cloud_share'), "Share Online", self)
         whatsapp_action.setStatusTip("Share via WhatsApp Web (Ctrl+W)")
         whatsapp_action.setShortcut("Ctrl+W")
         whatsapp_action.triggered.connect(self.share_via_whatsapp)
