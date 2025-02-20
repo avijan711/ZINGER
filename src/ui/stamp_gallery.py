@@ -1,9 +1,9 @@
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QPushButton, QComboBox, QFileDialog, QInputDialog,
-    QMessageBox, QFrame
+    QMessageBox, QFrame, QColorDialog, QApplication
 )
-from PyQt6.QtGui import QPixmap, QDrag, QImage
+from PyQt6.QtGui import QPixmap, QDrag, QImage, QColor
 from PyQt6.QtCore import Qt, QMimeData, QSize, QByteArray, QPoint
 from core.stamp_manager import StampManager
 from .flow_layout import FlowLayout
@@ -63,10 +63,47 @@ class StampThumbnail(QLabel):
             }
         """)
         self.name_label.setWordWrap(True)
-        self.name_label.setMaximumWidth(90)
+        self.name_label.setMaximumWidth(65)  # Reduced width to make room for color button
         
-        # Position name label at bottom
-        self.name_label.setGeometry(5, 70, 90, 25)
+        # Add color button
+        self.color_button = QPushButton(self)
+        self.color_button.setFixedSize(20, 20)
+        self.color_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {metadata.get('color', '#000000')};
+                border: 1px solid #ddd;
+                border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid #0078d4;
+            }}
+        """)
+        self.color_button.clicked.connect(self.show_color_picker)
+        
+        # Position labels and button
+        self.name_label.setGeometry(5, 70, 65, 25)
+        self.color_button.setGeometry(75, 72, 20, 20)
+
+    def show_color_picker(self):
+        """Show color picker dialog and update stamp color"""
+        current_color = QColor(self.metadata.get('color', '#000000'))
+        color = QColorDialog.getColor(current_color, self, "Choose Stamp Color")
+        
+        if color.isValid():
+            new_color = color.name()
+            if self.gallery and self.gallery.stamp_manager:
+                if self.gallery.stamp_manager.update_stamp_color(self.stamp_id, new_color):
+                    self.metadata['color'] = new_color
+                    self.color_button.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: {new_color};
+                            border: 1px solid #ddd;
+                            border-radius: 3px;
+                        }}
+                        QPushButton:hover {{
+                            border: 1px solid #0078d4;
+                        }}
+                    """)
 
     def mousePressEvent(self, event):
         """Handle mouse press for drag and drop"""
@@ -109,8 +146,12 @@ class StampGallery(QWidget):
         self.stamp_manager.stamp_added.connect(self.on_stamp_added)
         self.stamp_manager.stamp_removed.connect(self.on_stamp_removed)
         self.stamp_manager.stamp_renamed.connect(self.on_stamp_renamed)
+        self.stamp_manager.stamp_color_changed.connect(self.on_stamp_color_changed)
         self.stamp_manager.category_added.connect(self.on_category_added)
         self.stamp_manager.category_removed.connect(self.on_category_removed)
+        
+        # Clear image cache when colors change
+        self.stamp_manager.stamp_color_changed.connect(self.clear_image_cache)
 
     def init_ui(self):
         """Initialize the user interface"""
@@ -256,12 +297,12 @@ class StampGallery(QWidget):
         for stamp in stamps:
             stamp_data = self.stamp_manager.get_stamp_data(stamp['id'])
             if stamp_data:
-                # Create metadata with defaults
-                metadata = {
+                # Create metadata with defaults including color
+                metadata = stamp_data[2] if stamp_data[2] else {}
+                metadata.update({
                     'aspect_ratio': stamp.get('aspect_ratio', 1.0),
-                    'original_width': stamp.get('original_width', 100),
-                    'original_height': stamp.get('original_height', 100)
-                }
+                    'color': stamp.get('color', '#000000')
+                })
                 
                 thumbnail = StampThumbnail(
                     stamp['id'],
@@ -367,3 +408,26 @@ class StampGallery(QWidget):
         if index >= 0:
             self.category_combo.removeItem(index)
             self.category_combo.setCurrentText("General")
+            
+    def on_stamp_color_changed(self, stamp_id: str, new_color: str):
+        """Handle stamp color changed signal"""
+        self.load_stamps(self.category_combo.currentText())
+        
+    def clear_image_cache(self, stamp_id: str, new_color: str):
+        """Clear the image cache when a stamp's color changes"""
+        try:
+            # Find the main window
+            main_window = self.window()
+            if not main_window:
+                return
+                
+            # Find all PDF views in the main window
+            from ui.pdf_view import PDFView  # Import here to avoid circular imports
+            for pdf_view in main_window.findChildren(PDFView):
+                if hasattr(pdf_view, 'viewport_widget'):
+                    # Clear the cache and update the view
+                    if hasattr(pdf_view.viewport_widget, 'image_cache'):
+                        pdf_view.viewport_widget.image_cache.clear()
+                    pdf_view.viewport_widget.update()
+        except Exception as e:
+            print(f"Error clearing image cache: {e}")

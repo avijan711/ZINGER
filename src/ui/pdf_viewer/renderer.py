@@ -77,10 +77,15 @@ class PDFRenderer:
             )
             
             if annotation.type == "stamp":
+                # Get color from annotation content
+                color = annotation.content.get("color")
+                logger.debug(f"Rendering stamp annotation with content: {annotation.content}")
+                logger.debug(f"Using color: {color}")
                 img = self.image_cache.get_scaled_image(
                     annotation.content["image_data"],
                     int(viewport_rect.width()),
-                    int(viewport_rect.height())
+                    int(viewport_rect.height()),
+                    color
                 )
                 painter.drawImage(viewport_rect, img)
                 

@@ -12,6 +12,7 @@ class StampManager(QObject):
     stamp_added = pyqtSignal(str, str)  # stamp_id, category
     stamp_removed = pyqtSignal(str)  # stamp_id
     stamp_renamed = pyqtSignal(str, str)  # stamp_id, new_name
+    stamp_color_changed = pyqtSignal(str, str)  # stamp_id, new_color
     category_added = pyqtSignal(str)  # category
     category_removed = pyqtSignal(str)  # category
 
@@ -89,7 +90,8 @@ class StampManager(QObject):
                 'file': str(stamp_path),
                 'original_width': width,
                 'original_height': height,
-                'aspect_ratio': width / height
+                'aspect_ratio': width / height,
+                'color': '#000000'  # Default black color
             }
             self.categories[category].append(stamp_id)
             
@@ -154,6 +156,26 @@ class StampManager(QObject):
             print(f"Error renaming stamp: {e}")
             return False
 
+    def update_stamp_color(self, stamp_id: str, color: str) -> bool:
+        """Update a stamp's color"""
+        if stamp_id not in self.stamps:
+            return False
+
+        try:
+            # Update metadata
+            self.stamps[stamp_id]['color'] = color
+            
+            # Save changes
+            self._save_metadata()
+            
+            # Emit signal
+            self.stamp_color_changed.emit(stamp_id, color)
+            
+            return True
+        except Exception as e:
+            print(f"Error updating stamp color: {e}")
+            return False
+
     def add_category(self, category: str) -> bool:
         """Add a new category"""
         if category in self.categories:
@@ -206,7 +228,8 @@ class StampManager(QObject):
                 return f.read(), stamp_info['name'], {
                     'original_width': stamp_info['original_width'],
                     'original_height': stamp_info['original_height'],
-                    'aspect_ratio': stamp_info['aspect_ratio']
+                    'aspect_ratio': stamp_info['aspect_ratio'],
+                    'color': stamp_info.get('color', '#000000')
                 }
         except Exception as e:
             print(f"Error reading stamp data: {e}")

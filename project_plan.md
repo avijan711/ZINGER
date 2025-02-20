@@ -1,90 +1,89 @@
-# PDF Signing Enhancement Plan
+# Stamp Color Reset Feature Implementation Plan
 
 ## Overview
-Add automatic saving functionality and an intuitive drag-and-drop interface for signed PDFs.
-
-## Components
-
-### 1. Sign Button
-- Add a prominent "Sign" button to the main window
-- Implement automatic save functionality without dialogs
-- Save to a designated location with a clear naming convention
-- Provide visual feedback during/after saving
-
-### 2. Drag-and-Drop Area
-- Create a dedicated "Drag from here" section
-- Design an intuitive visual indicator for draggable PDFs
-- Implement drag source functionality
-- Add visual feedback during drag operations
-
-## Implementation Details
-
-### Sign Button Implementation
-1. Add button to main window toolbar
-2. Implement save functionality:
-   - Use original filename with "_signed" suffix
-   - Save to same directory as original
-   - No dialog prompts
-3. Add visual feedback:
-   - Button state changes
-   - Success/failure indicators
-   - Clear status messages
-
-### Drag-and-Drop Area Implementation
-1. Create new DragSource widget:
-   ```python
-   class PDFDragSource(QWidget):
-       # Custom widget for dragging signed PDFs
-       # Visual indicator of draggable area
-       # Drag start/end handling
-   ```
-
-2. Add to main window layout:
-   ```python
-   # Add to bottom of window
-   # Clear visual design
-   # "Drag from here" label
-   ```
-
-3. Implement drag functionality:
-   ```python
-   # Start drag on mouse press
-   # Create drag object with PDF data
-   # Handle drag feedback
-   ```
-
-### UI/UX Considerations
-- Clear visual hierarchy with Sign button prominent
-- Intuitive drag area design
-- Consistent visual feedback
-- Clear success/failure states
-
-### File Handling
-- Automatic file naming convention
-- Proper file path handling
-- Error handling for file operations
-
-## Required Changes
-
-1. MainWindow class:
-   - Add Sign button
-   - Add drag source widget
-   - Implement save functionality
-
-2. New DragSource widget:
-   - Custom widget implementation
-   - Drag and drop handling
-   - Visual design
-
-3. PDF handling:
-   - Automatic save functionality
-   - File path management
-   - Error handling
+Add a "Reset Color" option to the context menu when right-clicking a colored stamp annotation in a PDF document.
 
 ## Implementation Steps
 
-1. Create Sign button and automatic save functionality
-2. Implement DragSource widget
-3. Add visual feedback and error handling
-4. Integrate components into main window
-5. Test and refine user experience
+1. Context Menu Enhancement
+   - Modify PDFViewport.contextMenuEvent to identify stamp annotations
+   - Add conditional logic to show "Reset Color" option only for stamps
+   - Place the option in a logical position in the menu (before or after "Remove")
+
+2. Reset Color Functionality
+   - Add _reset_stamp_color method to PDFViewport class
+   - Method should:
+     * Set color back to "#000000" (default black)
+     * Clear the image cache to force redraw
+     * Update the display to show changes
+
+3. Validation and Checks
+   - Verify annotation is a stamp type
+   - Check if annotation has a color set
+   - Ensure proper error handling
+
+4. Cache Management
+   - Clear ImageCache when color is reset
+   - Force redraw of affected annotations
+   - Maintain proper state consistency
+
+## Technical Details
+
+### Context Menu Changes
+```python
+if clicked_annotation and clicked_annotation.type == "stamp":
+    menu = QMenu(self)
+    
+    # Add reset color option
+    if "color" in clicked_annotation.content:
+        reset_color_action = menu.addAction("Reset to Default Color")
+        reset_color_action.triggered.connect(
+            lambda: self._reset_stamp_color(clicked_annotation)
+        )
+    
+    # Existing remove action
+    remove_action = menu.addAction("Remove")
+    remove_action.triggered.connect(
+        lambda: self._remove_annotation(clicked_annotation)
+    )
+```
+
+### Reset Color Method
+```python
+def _reset_stamp_color(self, annotation: Annotation) -> None:
+    """Reset a stamp annotation's color to default"""
+    try:
+        if "color" in annotation.content:
+            # Update to default color
+            annotation.content["color"] = "#000000"
+            # Clear image cache to force redraw
+            self.image_cache.clear()
+            # Update display
+            self.update()
+    except Exception as e:
+        logger.error(f"Error resetting stamp color: {e}")
+```
+
+## Testing Plan
+
+1. Basic Functionality
+   - Right-click on a colored stamp shows "Reset Color" option
+   - Right-click on non-stamp annotations doesn't show the option
+   - Option only appears when color is set
+
+2. Color Reset
+   - Verify stamp returns to default black color
+   - Check that white/transparent areas remain unchanged
+   - Ensure proper visual update after reset
+
+3. Edge Cases
+   - Multiple stamps with different colors
+   - Stamps without color property
+   - Rapid color changes and resets
+
+## Implementation Order
+
+1. Add _reset_stamp_color method
+2. Modify context menu logic
+3. Add cache clearing
+4. Test and verify functionality

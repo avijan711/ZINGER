@@ -10,14 +10,12 @@ from PyQt6.QtGui import (
 from PyQt6.QtCore import QUrl, QTemporaryFile
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize
 from core.pdf_handler import PDFHandler, Annotation
-from PIL import Image
-from io import BytesIO
 import fitz
 import json
 import logging
-from functools import lru_cache
 from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
+from .pdf_viewer.image_cache import ImageCache
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -25,7 +23,6 @@ logger = logging.getLogger(__name__)
 # Constants
 HANDLE_SIZE = 8
 MIN_SIZE = 20
-MAX_CACHE_SIZE = 100
 ZOOM_RANGE = (0.1, 5.0)
 DEFAULT_ZOOM = 1.0
 
@@ -74,33 +71,6 @@ class AnnotationManager:
                 if rect.contains(pos):
                     return annotation
         return None
-
-class ImageCache:
-    """Handles caching of scaled images"""
-    
-    def __init__(self, max_size: int = MAX_CACHE_SIZE):
-        self._cache: Dict[Tuple, QImage] = {}
-        self._max_size = max_size
-        
-    @lru_cache(maxsize=MAX_CACHE_SIZE)
-    def get_scaled_image(self, image_data: bytes, width: int, height: int) -> QImage:
-        """Get a scaled version of the image, using cache if available"""
-        try:
-            with Image.open(BytesIO(image_data)) as img:
-                if img.mode != 'RGBA':
-                    img = img.convert('RGBA')
-                img = img.resize((width, height), Image.Resampling.LANCZOS)
-                data = img.tobytes("raw", "RGBA")
-                qimg = QImage(
-                    data,
-                    img.width,
-                    img.height,
-                    QImage.Format.Format_RGBA8888
-                )
-                return qimg
-        except Exception as e:
-            logger.error(f"Error scaling image: {e}")
-            return QImage()
 
 class PDFViewport(QWidget):
     """Widget for rendering PDF pages and handling annotations"""
@@ -226,11 +196,16 @@ class PDFViewport(QWidget):
             )
             
             if annotation.type == "stamp":
-                # Get scaled image
+                # Get color from annotation content
+                color = annotation.content.get("color")
+                logger.debug(f"Rendering stamp with color: {color}")
+                
+                # Get scaled and colored image
                 img = self.image_cache.get_scaled_image(
                     annotation.content["image_data"],
                     max(1, int(viewport_rect.width())),
-                    max(1, int(viewport_rect.height()))
+                    max(1, int(viewport_rect.height())),
+                    color
                 )
                 
                 if not img.isNull():
@@ -658,6 +633,7 @@ class PDFViewport(QWidget):
                         original_width = metadata.get('original_width', 100)
                         original_height = metadata.get('original_height', 100)
                         aspect_ratio = metadata.get('aspect_ratio', 1.0)
+                        color = metadata.get('color', '#000000')
                     else:
                         # Fallback to image dimensions if no metadata
                         img = QImage.fromData(stamp_bytes)
@@ -702,7 +678,8 @@ class PDFViewport(QWidget):
                         "aspect_ratio": float(aspect_ratio),
                         "original_width": float(original_width),
                         "original_height": float(original_height),
-                        "scale_factor": float(scale_factor)
+                        "scale_factor": float(scale_factor),
+                        "color": color if metadata_data else "#000000"  # Use metadata color or default
                     },
                     page=self.pdf_handler.current_page
                 )
@@ -781,6 +758,18 @@ class PDFViewport(QWidget):
             
             if clicked_annotation:
                 menu = QMenu(self)
+                
+                # Add reset color option for stamps
+                if (clicked_annotation.type == "stamp" and
+                    "color" in clicked_annotation.content and
+                    clicked_annotation.content["color"] != "#000000"):
+                    reset_color_action = menu.addAction("Reset Color")
+                    reset_color_action.triggered.connect(
+                        lambda: self._reset_stamp_color(clicked_annotation)
+                    )
+                    menu.addSeparator()
+                
+                # Add remove action
                 remove_action = menu.addAction("Remove")
                 remove_action.triggered.connect(
                     lambda: self._remove_annotation(clicked_annotation)
@@ -801,6 +790,21 @@ class PDFViewport(QWidget):
                 self.update()
         except Exception as e:
             logger.error(f"Error removing annotation: {e}")
+            
+    def _reset_stamp_color(self, annotation: Annotation) -> None:
+        """Reset a stamp annotation's color to default black"""
+        try:
+            if annotation.type == "stamp" and "color" in annotation.content:
+                logger.debug(f"Resetting stamp color from {annotation.content['color']} to default")
+                # Update to default color
+                annotation.content["color"] = "#000000"
+                # Clear image cache to force redraw
+                self.image_cache.clear()
+                # Update display
+                self.update()
+                logger.debug("Successfully reset stamp color to default")
+        except Exception as e:
+            logger.error(f"Error resetting stamp color: {e}")
 
 class PDFView(QScrollArea):
     """Scrollable container for PDF viewport"""

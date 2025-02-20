@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 
+# Version
+APP_VERSION = "0.2"
+
 # Application paths
 APP_DIR = Path(os.path.expanduser("~")) / ".pysign"
 STAMPS_DIR = APP_DIR / "stamps"

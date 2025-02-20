@@ -1,4 +1,5 @@
 # PySign - PDF Signing Application
+Version 0.2
 
 PySign is a powerful PDF signing application that allows users to digitally stamp and annotate PDF documents. Built with Python and PyQt6, it provides a modern, user-friendly interface for managing digital signatures and stamps.
 
@@ -19,7 +20,8 @@ PySign is a powerful PDF signing application that allows users to digitally stam
 - **Stamping Features**
   - Drag & drop stamps onto PDF
   - Resize and rotate stamps
-  - Adjust opacity
+  - Customize stamp colors
+  - Reset stamps to default color
   - Multi-stamp support
   - Undo/redo functionality
 

@@ -1,7 +1,10 @@
 """PDF viewport widget for displaying and interacting with PDF documents"""
 
-from PyQt6.QtWidgets import QWidget, QSizePolicy
-from PyQt6.QtGui import QPainter, QMouseEvent, QContextMenuEvent, QMenu
+from PyQt6.QtWidgets import QWidget, QSizePolicy, QMenu
+from PyQt6.QtGui import (
+    QPainter, QMouseEvent, QContextMenuEvent,
+    QDragEnterEvent, QDragMoveEvent, QDropEvent
+)
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from typing import Optional
 import logging
@@ -216,11 +219,30 @@ class PDFViewport(QWidget):
             )
             
             if clicked_annotation:
+                logger.debug(f"Context menu for annotation: {clicked_annotation}")
+                logger.debug(f"Annotation type: {getattr(clicked_annotation, 'type', 'unknown')}")
+                logger.debug(f"Annotation content: {getattr(clicked_annotation, 'content', {})}")
+                
                 menu = QMenu(self)
+                
+                # Add reset color action for stamp annotations first
+                if (hasattr(clicked_annotation, 'type') and
+                    clicked_annotation.type == "stamp" and
+                    hasattr(clicked_annotation, 'content') and
+                    'color' in clicked_annotation.content and
+                    clicked_annotation.content['color'] != '#000000'):  # Only show if not already default
+                    logger.debug("Adding Reset Color option to context menu")
+                    reset_color_action = menu.addAction("Reset Color")
+                    reset_color_action.triggered.connect(
+                        lambda: self._reset_stamp_color(clicked_annotation)
+                    )
+                
+                # Add remove action
                 remove_action = menu.addAction("Remove")
                 remove_action.triggered.connect(
                     lambda: self._remove_annotation(clicked_annotation)
                 )
+                
                 menu.exec(event.globalPos())
                 
         except Exception as e:
@@ -236,3 +258,35 @@ class PDFViewport(QWidget):
                 
         except Exception as e:
             logger.error(f"Error removing annotation: {e}")
+            
+    def _reset_stamp_color(self, annotation: Annotation) -> None:
+        """Reset a stamp annotation's color to default black"""
+        try:
+            if (hasattr(annotation, 'type') and
+                annotation.type == "stamp" and
+                hasattr(annotation, 'content') and
+                'color' in annotation.content):
+                logger.debug(f"Resetting stamp color from {annotation.content['color']} to default")
+                # Update to default color
+                annotation.content["color"] = "#000000"
+                # Clear image cache to force redraw
+                self.image_cache.clear()
+                # Update display
+                self.update()
+                logger.debug("Successfully reset stamp color to default")
+        except Exception as e:
+            logger.error(f"Error resetting stamp color: {e}")
+            
+    def _reset_stamp_color(self, annotation: Annotation) -> None:
+        """Reset a stamp annotation's color to default"""
+        try:
+            if "color" in annotation.content:
+                # Update to default color
+                annotation.content["color"] = "#000000"
+                # Clear image cache to force redraw
+                self.image_cache.clear()
+                # Update display
+                self.update()
+                logger.debug("Reset stamp color to default")
+        except Exception as e:
+            logger.error(f"Error resetting stamp color: {e}")
