@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QScrollArea, QWidget, QGridLayout
+    QScrollArea, QWidget, QGridLayout, QStyle
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QPixmap, QImage,
@@ -26,15 +26,25 @@ class SignatureCanvas(QWidget):
         self.points = []
         self.last_point = None
         self.is_drawing = False
+        self.show_guide = True  # Show guide text when empty
         
         # Set fixed size for canvas
-        self.setFixedSize(400, 200)
+        self.setFixedSize(500, 200)  # Wider canvas for better usability
         
-        # Set white background
+        # Set white background with border
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), Qt.GlobalColor.white)
         self.setPalette(palette)
+        
+        # Add border and shadow effect
+        self.setStyleSheet("""
+            SignatureCanvas {
+                background-color: white;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+            }
+        """)
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press events"""
@@ -60,17 +70,47 @@ class SignatureCanvas(QWidget):
             self.is_drawing = False
 
     def paintEvent(self, event):
-        """Paint the signature"""
+        """Paint the signature with guide text and grid"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Draw background
         painter.fillRect(event.rect(), Qt.GlobalColor.white)
         
-        # Draw signature
-        pen = QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine)
-        painter.setPen(pen)
-        painter.drawPath(self.path)
+        # Draw subtle grid pattern
+        grid_pen = QPen(QColor("#f0f0f0"), 1, Qt.PenStyle.SolidLine)
+        painter.setPen(grid_pen)
+        
+        # Vertical lines
+        for x in range(0, self.width(), 50):
+            painter.drawLine(x, 0, x, self.height())
+            
+        # Horizontal lines
+        for y in range(0, self.height(), 50):
+            painter.drawLine(0, y, self.width(), y)
+        
+        # Draw baseline
+        baseline_pen = QPen(QColor("#e0e0e0"), 2, Qt.PenStyle.DashLine)
+        painter.setPen(baseline_pen)
+        baseline_y = self.height() * 2 // 3
+        painter.drawLine(0, baseline_y, self.width(), baseline_y)
+        
+        # Draw guide text if no signature and show_guide is True
+        if not self.points and self.show_guide:
+            painter.setPen(QPen(QColor("#999999")))
+            font = painter.font()
+            font.setPointSize(12)
+            painter.setFont(font)
+            text_rect = self.rect()
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, "Sign Here")
+        
+        # Draw signature with smooth, variable-width pen
+        if self.points:
+            pen = QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(self.path)
 
     def clear(self):
         """Clear the signature"""
@@ -108,6 +148,7 @@ class SignatureThumbnail(QLabel):
         self.signature_id = signature_id
         self.signature_data = signature_data
         self.signature_name = name
+        self.is_selected = False
         
         # Create pixmap from signature data
         image = QImage.fromData(signature_data)
@@ -115,7 +156,7 @@ class SignatureThumbnail(QLabel):
         
         # Scale pixmap to thumbnail size
         scaled_pixmap = pixmap.scaled(
-            160, 80,
+            200, 100,  # Larger size for better visibility
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
@@ -123,11 +164,64 @@ class SignatureThumbnail(QLabel):
         # Set pixmap and configure label
         self.setPixmap(scaled_pixmap)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setToolTip(name)
-        self.setFixedSize(QSize(180, 100))
+        self.setToolTip(f"Name: {name}\nClick to select")
+        self.setFixedSize(QSize(220, 140))  # Larger size to accommodate name label
         
-        # Add border
-        self.setStyleSheet("border: 1px solid gray;")
+        # Modern styling with hover effect
+        self.setStyleSheet("""
+            SignatureThumbnail {
+                background-color: white;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 8px;
+                margin: 4px;
+            }
+            SignatureThumbnail:hover {
+                border-color: #2196F3;
+                background-color: #f8f9fa;
+            }
+        """)
+        
+        # Add name label below thumbnail
+        self.name_label = QLabel(name, self)
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.name_label.setStyleSheet("""
+            QLabel {
+                color: #495057;
+                font-size: 12px;
+                padding-top: 4px;
+            }
+        """)
+        self.name_label.move(0, self.height() - 25)
+        self.name_label.setFixedWidth(self.width())
+
+    def setSelected(self, selected: bool):
+        """Update the selection state and styling"""
+        self.is_selected = selected
+        if selected:
+            self.setStyleSheet("""
+                SignatureThumbnail {
+                    background-color: #e3f2fd;
+                    border: 2px solid #2196F3;
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin: 4px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                SignatureThumbnail {
+                    background-color: white;
+                    border: 1px solid #dee2e6;
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin: 4px;
+                }
+                SignatureThumbnail:hover {
+                    border-color: #2196F3;
+                    background-color: #f8f9fa;
+                }
+            """)
 
 class SignaturePadDialog(QDialog):
     def __init__(self, parent=None):
@@ -137,31 +231,97 @@ class SignaturePadDialog(QDialog):
         self.init_ui()
 
     def init_ui(self):
-        """Initialize the user interface"""
+        """Initialize the user interface with modern styling"""
         self.setWindowTitle("Signature Pad")
-        self.setMinimumWidth(800)
+        self.setMinimumWidth(900)  # Wider dialog for better layout
+        
+        # Apply modern styling to the dialog
+        self.setStyleSheet("""
+            QDialog {
+                background-color: white;
+            }
+            QPushButton {
+                padding: 8px 16px;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                background-color: white;
+                color: #212529;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #f8f9fa;
+                border-color: #c1c9d0;
+            }
+            QPushButton:pressed {
+                background-color: #e9ecef;
+            }
+            QPushButton[class="primary"] {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+            }
+            QPushButton[class="primary"]:hover {
+                background-color: #1976D2;
+            }
+            QPushButton[class="danger"] {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+            }
+            QPushButton[class="danger"]:hover {
+                background-color: #c82333;
+            }
+            QLabel {
+                color: #212529;
+                font-size: 14px;
+            }
+            QLabel[class="title"] {
+                font-size: 16px;
+                font-weight: bold;
+                padding: 8px;
+                margin-bottom: 8px;
+            }
+            QScrollArea {
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
         
         layout = QHBoxLayout(self)
+        layout.setSpacing(20)  # Increased spacing between sections
         
         # Left side - Drawing area
         left_layout = QVBoxLayout()
+        left_layout.setSpacing(15)  # Increased spacing between elements
+        
+        # Drawing area title
+        drawing_title = QLabel("Draw Signature")
+        drawing_title.setProperty("class", "title")
+        drawing_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        left_layout.addWidget(drawing_title)
         
         # Signature canvas
         self.canvas = SignatureCanvas()
-        left_layout.addWidget(self.canvas)
+        left_layout.addWidget(self.canvas, alignment=Qt.AlignmentFlag.AlignHCenter)
         
         # Canvas controls
         canvas_controls = QHBoxLayout()
+        canvas_controls.setSpacing(10)
         
         clear_btn = QPushButton("Clear")
+        clear_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
         clear_btn.clicked.connect(self.canvas.clear)
         canvas_controls.addWidget(clear_btn)
         
         save_btn = QPushButton("Save Signature")
+        save_btn.setProperty("class", "primary")
+        save_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         save_btn.clicked.connect(self.save_signature)
         canvas_controls.addWidget(save_btn)
         
         import_btn = QPushButton("Import Image")
+        import_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         import_btn.clicked.connect(self.import_signature)
         canvas_controls.addWidget(import_btn)
         
@@ -171,6 +331,7 @@ class SignaturePadDialog(QDialog):
         date_controls = QHBoxLayout()
         
         add_date_btn = QPushButton("Add Date Stamp")
+        add_date_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         add_date_btn.clicked.connect(self.add_date_stamp)
         date_controls.addWidget(add_date_btn)
         
@@ -180,9 +341,11 @@ class SignaturePadDialog(QDialog):
         
         # Right side - Saved signatures
         right_layout = QVBoxLayout()
+        right_layout.setSpacing(15)
         
         # Title
         title = QLabel("Saved Signatures")
+        title.setProperty("class", "title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         right_layout.addWidget(title)
         
@@ -190,23 +353,28 @@ class SignaturePadDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumWidth(300)  # Set minimum width for better layout
         
         # Content widget for scroll area
         self.content = QWidget()
         self.grid_layout = QGridLayout(self.content)
-        self.grid_layout.setSpacing(10)
+        self.grid_layout.setSpacing(15)  # Increased spacing between signatures
         
         scroll.setWidget(self.content)
         right_layout.addWidget(scroll)
         
         # Signature controls
         sig_controls = QHBoxLayout()
+        sig_controls.setSpacing(10)
         
         delete_btn = QPushButton("Delete")
+        delete_btn.setProperty("class", "danger")
+        delete_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
         delete_btn.clicked.connect(self.delete_signature)
         sig_controls.addWidget(delete_btn)
         
         rename_btn = QPushButton("Rename")
+        rename_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
         rename_btn.clicked.connect(self.rename_signature)
         sig_controls.addWidget(rename_btn)
         
@@ -326,17 +494,14 @@ class SignaturePadDialog(QDialog):
                     )
 
     def select_signature(self, signature_id: str):
-        """Select a signature"""
+        """Select a signature with visual feedback"""
         self.selected_signature = signature_id
         
-        # Highlight selected signature
+        # Update selection state for all thumbnails
         for i in range(self.grid_layout.count()):
             widget = self.grid_layout.itemAt(i).widget()
             if isinstance(widget, SignatureThumbnail):
-                if widget.signature_id == signature_id:
-                    widget.setStyleSheet("border: 2px solid blue;")
-                else:
-                    widget.setStyleSheet("border: 1px solid gray;")
+                widget.setSelected(widget.signature_id == signature_id)
 
     def add_date_stamp(self):
         """Add a date stamp"""

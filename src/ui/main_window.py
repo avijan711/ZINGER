@@ -1,13 +1,18 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QToolBar, QStatusBar, QFileDialog, QMessageBox,
-    QFrame
+    QFrame, QStyle
 )
 from PyQt6.QtGui import (
     QAction, QIcon, QDragEnterEvent,
     QDragMoveEvent, QDropEvent
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
+
+from config.styles import (
+    TOOLBAR_STYLE, SIGN_BUTTON_STYLE, DROP_ZONE_STYLE,
+    STATUS_BAR_STYLE, TOOLBAR_ICON_SIZE, LARGE_ICON_SIZE
+)
 
 from core.pdf_handler import PDFHandler
 from core.share_manager import ShareManager
@@ -58,32 +63,29 @@ class MainWindow(QMainWindow):
         self.pdf_view = PDFView(self.pdf_handler)
         content_layout.addWidget(self.pdf_view)
         
-        # Create drag source area
+        # Create drag source area with enhanced styling
         self.drag_source = PDFDragSource()
-        self.drag_source.setFixedHeight(80)  # Set fixed height for the drag area
+        self.drag_source.setFixedHeight(100)  # Increased height for better visibility
         
-        # Create a container for the drag source with styling
-        drag_container = QFrame()
-        drag_container.setObjectName("dragContainer")
-        drag_container.setStyleSheet("""
-            QFrame#dragContainer {
-                background-color: #f8f9fa;
-                border-top: 1px solid #dee2e6;
-                padding: 10px;
-            }
-        """)
-        drag_layout = QHBoxLayout(drag_container)
+        # Create a container for the drag source with modern styling
+        self.drag_container = QFrame()
+        self.drag_container.setObjectName("dragContainer")
+        self.drag_container.setProperty("dragActive", "false")
+        self.drag_container.setStyleSheet(DROP_ZONE_STYLE)
+        
+        drag_layout = QHBoxLayout(self.drag_container)
         drag_layout.addWidget(self.drag_source)
         
         # Add drag source container to main layout
-        main_layout.addWidget(drag_container)
+        main_layout.addWidget(self.drag_container)
 
         # Create toolbar
         self.create_toolbar()
 
-        # Create status bar
+        # Create status bar with modern styling
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        self.status_bar.setStyleSheet(STATUS_BAR_STYLE)
         self.status_bar.showMessage("Ready")
 
         # Connect PDF handler signals
@@ -92,96 +94,93 @@ class MainWindow(QMainWindow):
         self.pdf_handler.zoom_changed.connect(self.on_zoom_changed)
 
     def create_toolbar(self):
-        """Create the main toolbar"""
+        """Create the main toolbar with modern icons and styling"""
         toolbar = QToolBar()
         toolbar.setIconSize(QSize(TOOLBAR_ICON_SIZE, TOOLBAR_ICON_SIZE))
+        toolbar.setStyleSheet(TOOLBAR_STYLE)
         self.addToolBar(toolbar)
 
         # File actions
-        open_action = QAction("Open", self)
-        open_action.setStatusTip("Open PDF document")
+        open_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton), "Open", self)
+        open_action.setStatusTip("Open PDF document (Ctrl+O)")
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self.open_document)
         toolbar.addAction(open_action)
 
-        save_action = QAction("Save", self)
-        save_action.setStatusTip("Save PDF document")
+        save_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self)
+        save_action.setStatusTip("Save PDF document (Ctrl+S)")
+        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self.save_document)
         toolbar.addAction(save_action)
 
         toolbar.addSeparator()
 
         # Navigation actions
-        prev_page = QAction("Previous", self)
-        prev_page.setStatusTip("Go to previous page")
+        prev_page = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft), "Previous", self)
+        prev_page.setStatusTip("Go to previous page (Left Arrow)")
+        prev_page.setShortcut("Left")
         prev_page.triggered.connect(self.previous_page)
         toolbar.addAction(prev_page)
 
-        next_page = QAction("Next", self)
-        next_page.setStatusTip("Go to next page")
+        next_page = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight), "Next", self)
+        next_page.setStatusTip("Go to next page (Right Arrow)")
+        next_page.setShortcut("Right")
         next_page.triggered.connect(self.next_page)
         toolbar.addAction(next_page)
 
         toolbar.addSeparator()
 
         # Zoom actions
-        zoom_in = QAction("Zoom In", self)
-        zoom_in.setStatusTip("Zoom in")
+        zoom_in = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton), "Zoom In", self)
+        zoom_in.setStatusTip("Zoom in (Ctrl++)")
+        zoom_in.setShortcut("Ctrl++")
         zoom_in.triggered.connect(self.zoom_in)
         toolbar.addAction(zoom_in)
 
-        zoom_out = QAction("Zoom Out", self)
-        zoom_out.setStatusTip("Zoom out")
+        zoom_out = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton), "Zoom Out", self)
+        zoom_out.setStatusTip("Zoom out (Ctrl+-)")
+        zoom_out.setShortcut("Ctrl+-")
         zoom_out.triggered.connect(self.zoom_out)
         toolbar.addAction(zoom_out)
 
-        fit_width = QAction("Fit Width", self)
-        fit_width.setStatusTip("Fit to width")
+        fit_width = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton), "Fit Width", self)
+        fit_width.setStatusTip("Fit to width (Ctrl+W)")
+        fit_width.setShortcut("Ctrl+W")
         fit_width.triggered.connect(self.fit_width)
         toolbar.addAction(fit_width)
 
         toolbar.addSeparator()
 
         # Signature actions
-        signature_action = QAction("Signature", self)
-        signature_action.setStatusTip("Open signature pad")
+        signature_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon), "Draw Signature", self)
+        signature_action.setStatusTip("Open signature pad to draw or import signatures (Ctrl+G)")
+        signature_action.setShortcut("Ctrl+G")
         signature_action.triggered.connect(self.show_signature_pad)
         toolbar.addAction(signature_action)
         
-        # Add Sign button with prominent styling
-        sign_action = QAction("Sign", self)
-        sign_action.setStatusTip("Sign and save the document")
+        # Add Sign button with prominent styling and larger icon
+        sign_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton), "Sign", self)
+        sign_action.setStatusTip("Sign and save the document (Ctrl+Enter)")
+        sign_action.setShortcut("Ctrl+Return")
         sign_action.triggered.connect(self.sign_document)
         sign_action.setProperty("class", "primary")
         toolbar.addAction(sign_action)
         
-        # Style the Sign button to make it prominent
-        toolbar.setStyleSheet("""
-            QToolButton[class="primary"] {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                padding: 5px 10px;
-                border-radius: 4px;
-                margin: 0 5px;
-            }
-            QToolButton[class="primary"]:hover {
-                background-color: #0056b3;
-            }
-            QToolButton[class="primary"]:pressed {
-                background-color: #004085;
-            }
-        """)
+        # Apply custom styling to the toolbar and sign button
+        toolbar.setStyleSheet(TOOLBAR_STYLE + SIGN_BUTTON_STYLE)
         
         toolbar.addSeparator()
         
         # Share actions
-        email_action = QAction("Share via Email", self)
-        email_action.setStatusTip("Share via Outlook email")
+        email_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation), "Share via Email", self)
+        email_action.setStatusTip("Share via Outlook email (Ctrl+E)")
+        email_action.setShortcut("Ctrl+E")
         email_action.triggered.connect(self.share_via_email)
         toolbar.addAction(email_action)
         
-        whatsapp_action = QAction("Share via WhatsApp", self)
-        whatsapp_action.setStatusTip("Share via WhatsApp Web")
+        whatsapp_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxQuestion), "Share via WhatsApp", self)
+        whatsapp_action.setStatusTip("Share via WhatsApp Web (Ctrl+W)")
+        whatsapp_action.setShortcut("Ctrl+W")
         whatsapp_action.triggered.connect(self.share_via_whatsapp)
         toolbar.addAction(whatsapp_action)
         
@@ -394,11 +393,14 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Zoom: {zoom_percent}%")
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """Handle drag enter events"""
+        """Handle drag enter events with visual feedback"""
         mime_data = event.mimeData()
         
         # Accept any drag that has URLs
         if mime_data.hasUrls():
+            self.drag_container.setProperty("dragActive", "true")
+            self.drag_container.setStyleSheet(DROP_ZONE_STYLE)
+            self.status_bar.showMessage("Drop PDF files here to open")
             event.acceptProposedAction()
             return
             
@@ -415,10 +417,19 @@ class MainWindow(QMainWindow):
         
         for mime_type in pdf_mime_types:
             if mime_data.hasFormat(mime_type):
+                self.drag_container.setProperty("dragActive", "true")
+                self.drag_container.setStyleSheet(DROP_ZONE_STYLE)
+                self.status_bar.showMessage("Drop to add signature or stamp")
                 event.acceptProposedAction()
                 return
                 
         event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Handle drag leave events"""
+        self.drag_container.setProperty("dragActive", "false")
+        self.drag_container.setStyleSheet(DROP_ZONE_STYLE)
+        self.status_bar.showMessage("Ready")
 
     def dragMoveEvent(self, event: QDragMoveEvent):
         """Handle drag move events"""
@@ -448,10 +459,14 @@ class MainWindow(QMainWindow):
         event.ignore()
 
     def dropEvent(self, event: QDropEvent):
-        """Handle drop events"""
+        """Handle drop events with visual feedback"""
         mime_data = event.mimeData()
         
         try:
+            # Reset drag container state
+            self.drag_container.setProperty("dragActive", "false")
+            self.drag_container.setStyleSheet(DROP_ZONE_STYLE)
+            
             # Handle URL drops
             if mime_data.hasUrls():
                 for url in mime_data.urls():
@@ -459,11 +474,16 @@ class MainWindow(QMainWindow):
                         file_path = url.toLocalFile()
                         if file_path.lower().endswith('.pdf'):
                             if self.pdf_handler.open_document(file_path):
+                                self.status_bar.showMessage(f"Successfully opened: {file_path}")
                                 event.acceptProposedAction()
                                 return
             
             # Forward other drops to PDF view
             self.pdf_view.dropEvent(event)
+            
         except Exception as e:
             print(f"Error handling drop event: {e}")
+            self.status_bar.showMessage(f"Error: {str(e)}")
             event.ignore()
+            
+        self.status_bar.showMessage("Ready")
