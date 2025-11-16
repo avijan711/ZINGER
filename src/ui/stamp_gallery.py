@@ -422,7 +422,7 @@ class StampGallery(QWidget):
                 return
                 
             # Find all PDF views in the main window
-            from ui.pdf_view import PDFView  # Import here to avoid circular imports
+            from ui.pdf_viewer import PDFView  # Import here to avoid circular imports
             for pdf_view in main_window.findChildren(PDFView):
                 if hasattr(pdf_view, 'viewport_widget'):
                     # Clear the cache and update the view

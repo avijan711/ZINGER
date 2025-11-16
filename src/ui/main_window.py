@@ -45,7 +45,7 @@ def load_icon(name: str) -> QIcon:
 
 from core.pdf_handler import PDFHandler
 from core.share_manager import ShareManager
-from .pdf_view import PDFView
+from .pdf_viewer import PDFView
 from .stamp_gallery import StampGallery
 from .dialogs.signature_pad import SignaturePadDialog
 from .pdf_drag_source import PDFDragSource
