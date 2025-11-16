@@ -1,12 +1,14 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QToolBar, QStatusBar, QFileDialog, QMessageBox,
-    QFrame, QStyle
+    QFrame, QStyle, QApplication
 )
 from PyQt6.QtGui import (
     QAction, QIcon, QDragEnterEvent,
     QDragMoveEvent, QDropEvent
 )
+import os
+import sys
 from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
 from pathlib import Path
 
@@ -17,10 +19,29 @@ from config.styles import (
 
 def load_icon(name: str) -> QIcon:
     """Load an icon from the assets directory"""
-    icon_path = Path(__file__).parent.parent / 'assets' / 'icons' / f"{name}.png"
-    if icon_path.exists():
-        return QIcon(str(icon_path))
-    return QIcon()
+    if getattr(sys, 'frozen', False):
+        # Running in PyInstaller bundle
+        base_path = sys._MEIPASS
+        icon_path = os.path.join(base_path, f"{name}.png")
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+    else:
+        # Running in development
+        icon_path = str(Path(__file__).parent.parent / 'assets' / 'icons' / f"{name}.png")
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+    
+    print(f"Icon not found: {name}.png")
+    # If no custom icon found, return system icon based on type
+    if name == 'zoom_in':
+        return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
+    elif name == 'zoom_out':
+        return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown)
+    elif name == 'cloud_share':
+        return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon)
+    elif name == 'outlook':
+        return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DriveFDIcon)
+    return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
 
 from core.pdf_handler import PDFHandler
 from core.share_manager import ShareManager
