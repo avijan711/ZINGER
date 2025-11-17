@@ -273,30 +273,47 @@ class PDFViewport(QWidget):
             # Parse metadata
             if metadata_data:
                 metadata = json.loads(bytes(metadata_data.data()).decode('utf-8'))
+                original_width = metadata.get('original_width', 100)
+                original_height = metadata.get('original_height', 100)
                 aspect_ratio = metadata.get('aspect_ratio', 1.0)
                 color = metadata.get('color', '#000000')
             else:
+                # Fallback to image dimensions if no metadata
                 img = QImage.fromData(stamp_bytes)
-                aspect_ratio = img.width() / img.height() if img.height() > 0 else 1.0
+                if img.isNull():
+                    event.ignore()
+                    return
+                original_width = img.width()
+                original_height = img.height()
+                aspect_ratio = original_width / original_height if original_height > 0 else 1.0
                 color = '#000000'
 
-            # Calculate position in document coordinates
+            # Get drop position
             pos = event.position()
+
+            # Convert to document coordinates
             doc_x = pos.x() / self.pdf_handler.zoom_level
             doc_y = pos.y() / self.pdf_handler.zoom_level
 
-            # Create annotation
+            # Scale to a reasonable initial size (e.g. 100px width)
             target_width = 100
-            doc_width = target_width / self.pdf_handler.zoom_level
-            doc_height = doc_width / aspect_ratio
+            scale_factor = target_width / original_width
 
+            # Calculate size in document space
+            doc_width = (original_width * scale_factor) / self.pdf_handler.zoom_level
+            doc_height = (original_height * scale_factor) / self.pdf_handler.zoom_level
+
+            # Create annotation with document space coordinates
             annotation = Annotation(
                 type="stamp",
                 rect=(doc_x, doc_y, doc_x + doc_width, doc_y + doc_height),
                 content={
                     "image_data": stamp_bytes,
                     "name": stamp_name,
-                    "aspect_ratio": aspect_ratio,
+                    "aspect_ratio": float(aspect_ratio),
+                    "original_width": float(original_width),
+                    "original_height": float(original_height),
+                    "scale_factor": float(scale_factor),
                     "color": color
                 },
                 page=self.pdf_handler.current_page
@@ -331,31 +348,48 @@ class PDFViewport(QWidget):
             sig_name = mime_data.text()
             sig_bytes = bytes(sig_data.data())
 
-            # Parse metadata
+            # Parse metadata or get from image
             if metadata_data:
                 metadata = json.loads(bytes(metadata_data.data()).decode('utf-8'))
                 aspect_ratio = metadata.get('aspect_ratio', 1.0)
             else:
                 img = QImage.fromData(sig_bytes)
+                if img.isNull():
+                    event.ignore()
+                    return
                 aspect_ratio = img.width() / img.height() if img.height() > 0 else 1.0
 
-            # Calculate position in document coordinates
+            # Get image dimensions for proper scaling
+            img = QImage.fromData(sig_bytes)
+            original_width = img.width() if not img.isNull() else 100
+            original_height = img.height() if not img.isNull() else 100
+
+            # Get drop position
             pos = event.position()
+
+            # Convert to document coordinates
             doc_x = pos.x() / self.pdf_handler.zoom_level
             doc_y = pos.y() / self.pdf_handler.zoom_level
 
-            # Create annotation
+            # Scale to a reasonable initial size (e.g. 100px width)
             target_width = 100
-            doc_width = target_width / self.pdf_handler.zoom_level
-            doc_height = doc_width / aspect_ratio
+            scale_factor = target_width / original_width
 
+            # Calculate size in document space
+            doc_width = (original_width * scale_factor) / self.pdf_handler.zoom_level
+            doc_height = (original_height * scale_factor) / self.pdf_handler.zoom_level
+
+            # Create annotation with document space coordinates
             annotation = Annotation(
                 type="signature",
                 rect=(doc_x, doc_y, doc_x + doc_width, doc_y + doc_height),
                 content={
                     "image_data": sig_bytes,
                     "name": sig_name,
-                    "aspect_ratio": aspect_ratio
+                    "aspect_ratio": float(aspect_ratio),
+                    "original_width": float(original_width),
+                    "original_height": float(original_height),
+                    "scale_factor": float(scale_factor)
                 },
                 page=self.pdf_handler.current_page
             )
