@@ -17,6 +17,7 @@ class StampThumbnail(QLabel):
         self.stamp_name = name
         self.metadata = metadata
         self.gallery = gallery
+        self.is_selected = False
         
         # Create pixmap from stamp data
         image = QImage.fromData(stamp_data)
@@ -105,41 +106,87 @@ class StampThumbnail(QLabel):
                         }}
                     """)
 
+    def set_selected(self, selected: bool):
+        """Update the visual state of the stamp thumbnail"""
+        self.is_selected = selected
+        if selected:
+            self.setStyleSheet("""
+                QLabel {
+                    background-color: #e3f2fd;
+                    border: 2px solid #0078d4;
+                    border-radius: 4px;
+                    padding: 7px;
+                    margin: 4px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QLabel {
+                    background-color: white;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin: 4px;
+                }
+                QLabel:hover {
+                    border-color: #0078d4;
+                    background-color: #f0f9ff;
+                    border-width: 2px;
+                    padding: 7px;
+                }
+            """)
+
     def mousePressEvent(self, event):
-        """Handle mouse press for drag and drop"""
+        """Handle mouse press for selection and drag"""
         if event.button() == Qt.MouseButton.LeftButton:
-            # Create mime data with stamp information
-            mime_data = QMimeData()
-            mime_data.setData("application/x-stamp", QByteArray(self.stamp_data))
-            mime_data.setText(self.stamp_name)  # Set stamp name
-            
-            # Add metadata as JSON
-            metadata_bytes = json.dumps(self.metadata).encode('utf-8')
-            mime_data.setData("application/x-stamp-metadata", QByteArray(metadata_bytes))
-            
-            # Create drag object
-            drag = QDrag(self)
-            drag.setMimeData(mime_data)
-            
-            # Create drag pixmap (scaled for better visibility)
-            pixmap = self.pixmap()
-            if pixmap:
-                scaled_pixmap = pixmap.scaled(
-                    64, 64,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                drag.setPixmap(scaled_pixmap)
-                # Center the hotspot
-                drag.setHotSpot(QPoint(scaled_pixmap.width() // 2, scaled_pixmap.height() // 2))
-            
-            # Execute drag operation with both Copy and Move actions
-            drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
+            # First, handle selection
+            if self.gallery:
+                self.gallery.select_stamp(self)
+
+            # Store the start position for drag detection
+            self.drag_start_position = event.pos()
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for drag and drop"""
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+
+        # Check if we've moved enough to start a drag
+        if (event.pos() - self.drag_start_position).manhattanLength() < 10:
+            return
+
+        # Create mime data with stamp information
+        mime_data = QMimeData()
+        mime_data.setData("application/x-stamp", QByteArray(self.stamp_data))
+        mime_data.setText(self.stamp_name)
+
+        # Add metadata as JSON
+        metadata_bytes = json.dumps(self.metadata).encode('utf-8')
+        mime_data.setData("application/x-stamp-metadata", QByteArray(metadata_bytes))
+
+        # Create drag object
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+
+        # Create drag pixmap
+        pixmap = self.pixmap()
+        if pixmap:
+            scaled_pixmap = pixmap.scaled(
+                64, 64,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            drag.setPixmap(scaled_pixmap)
+            drag.setHotSpot(QPoint(scaled_pixmap.width() // 2, scaled_pixmap.height() // 2))
+
+        # Execute drag operation
+        drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
 
 class StampGallery(QWidget):
     def __init__(self, storage_path: str):
         super().__init__()
         self.stamp_manager = StampManager(storage_path)
+        self.selected_stamp = None
         self.init_ui()
         
         # Connect stamp manager signals
@@ -248,7 +295,55 @@ class StampGallery(QWidget):
             }
         """)
         category_layout.addWidget(import_btn)
-        
+
+        # Delete stamp button
+        self.delete_btn = QPushButton("Delete Stamp")
+        self.delete_btn.clicked.connect(self.delete_stamp)
+        self.delete_btn.setEnabled(False)
+        self.delete_btn.setStyleSheet("""
+            QPushButton {
+                padding: 8px;
+                border: 1px solid #dc3545;
+                border-radius: 4px;
+                background-color: #dc3545;
+                color: white;
+                min-height: 32px;
+            }
+            QPushButton:hover:enabled {
+                background-color: #c82333;
+            }
+            QPushButton:disabled {
+                background-color: #e9ecef;
+                border-color: #dee2e6;
+                color: #6c757d;
+            }
+        """)
+        category_layout.addWidget(self.delete_btn)
+
+        # Rename stamp button
+        self.rename_btn = QPushButton("Rename Stamp")
+        self.rename_btn.clicked.connect(self.rename_stamp)
+        self.rename_btn.setEnabled(False)
+        self.rename_btn.setStyleSheet("""
+            QPushButton {
+                padding: 8px;
+                border: 1px solid #6c757d;
+                border-radius: 4px;
+                background-color: #6c757d;
+                color: white;
+                min-height: 32px;
+            }
+            QPushButton:hover:enabled {
+                background-color: #5a6268;
+            }
+            QPushButton:disabled {
+                background-color: #e9ecef;
+                border-color: #dee2e6;
+                color: #6c757d;
+            }
+        """)
+        category_layout.addWidget(self.rename_btn)
+
         layout.addWidget(category_frame)
         
         # Create scroll area for stamps with styling
@@ -286,12 +381,17 @@ class StampGallery(QWidget):
 
     def load_stamps(self, category: str):
         """Load stamps for the selected category"""
+        # Clear selection
+        self.selected_stamp = None
+        self.delete_btn.setEnabled(False)
+        self.rename_btn.setEnabled(False)
+
         # Clear existing stamps
         while self.flow_layout.count():
             item = self.flow_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        
+
         # Load stamps from category
         stamps = self.stamp_manager.get_stamps_by_category(category)
         for stamp in stamps:
@@ -382,6 +482,72 @@ class StampGallery(QWidget):
                     self,
                     "Error",
                     "Failed to remove category."
+                )
+
+    def select_stamp(self, stamp_thumbnail):
+        """Select a stamp thumbnail"""
+        # Deselect previously selected stamp
+        if self.selected_stamp and self.selected_stamp != stamp_thumbnail:
+            self.selected_stamp.set_selected(False)
+
+        # Select the new stamp
+        self.selected_stamp = stamp_thumbnail
+        stamp_thumbnail.set_selected(True)
+
+        # Enable delete and rename buttons
+        self.delete_btn.setEnabled(True)
+        self.rename_btn.setEnabled(True)
+
+    def delete_stamp(self):
+        """Delete the selected stamp"""
+        if not self.selected_stamp:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Stamp",
+            f"Are you sure you want to delete '{self.selected_stamp.stamp_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.stamp_manager.delete_stamp(self.selected_stamp.stamp_id):
+                # Clear selection
+                self.selected_stamp = None
+                self.delete_btn.setEnabled(False)
+                self.rename_btn.setEnabled(False)
+                # Reload stamps
+                self.load_stamps(self.category_combo.currentText())
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to delete stamp."
+                )
+
+    def rename_stamp(self):
+        """Rename the selected stamp"""
+        if not self.selected_stamp:
+            return
+
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Stamp",
+            "Enter new name:",
+            text=self.selected_stamp.stamp_name
+        )
+
+        if ok and new_name:
+            if self.stamp_manager.rename_stamp(self.selected_stamp.stamp_id, new_name):
+                # Update the thumbnail name
+                self.selected_stamp.stamp_name = new_name
+                self.selected_stamp.name_label.setText(new_name)
+                self.selected_stamp.setToolTip(new_name)
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to rename stamp."
                 )
 
     # Signal handlers
