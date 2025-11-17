@@ -70,14 +70,28 @@ class AnnotationManager:
         """Start dragging an annotation"""
         self.state.drag_start_pos = pos
         self.state.selected_annotation = annotation
-        self.state.drag_start_rect = QRectF(*[float(x) for x in annotation.rect])
-        
+        # Store rect as (left, top, WIDTH, HEIGHT) not (left, top, right, bottom)
+        rect_coords = [float(x) for x in annotation.rect]
+        self.state.drag_start_rect = QRectF(
+            rect_coords[0],                    # left
+            rect_coords[1],                    # top
+            rect_coords[2] - rect_coords[0],   # width (right - left)
+            rect_coords[3] - rect_coords[1]    # height (bottom - top)
+        )
+
     def start_resize(self, pos: QPointF, annotation: Annotation, handle: str) -> None:
         """Start resizing an annotation"""
         self.state.drag_start_pos = pos
         self.state.selected_annotation = annotation
         self.state.resize_handle = handle
-        self.state.drag_start_rect = QRectF(*[float(x) for x in annotation.rect])
+        # Store rect as (left, top, WIDTH, HEIGHT) not (left, top, right, bottom)
+        rect_coords = [float(x) for x in annotation.rect]
+        self.state.drag_start_rect = QRectF(
+            rect_coords[0],                    # left
+            rect_coords[1],                    # top
+            rect_coords[2] - rect_coords[0],   # width (right - left)
+            rect_coords[3] - rect_coords[1]    # height (bottom - top)
+        )
         
     def update_hover(self, annotation: Optional[Annotation]) -> bool:
         """Update the hovered annotation state"""
