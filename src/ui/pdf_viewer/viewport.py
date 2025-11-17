@@ -18,6 +18,10 @@ from .drag_drop_handler import DragDropHandler
 
 logger = logging.getLogger(__name__)
 
+# Constants
+HANDLE_SIZE = 8
+MIN_SIZE = 20
+
 class PDFViewport(QWidget):
     """Widget for rendering PDF pages and handling annotations"""
     
@@ -111,19 +115,22 @@ class PDFViewport(QWidget):
         try:
             pos = event.position()
             state = self.annotation_manager.state
-            
+
             # Handle hover effects
             hovered = self.annotation_manager.get_annotation_at_position(
                 pos, self.pdf_handler.current_page
             )
             if self.annotation_manager.update_hover(hovered):
                 self.update()
-            
-            # Handle dragging
-            if (event.buttons() & Qt.MouseButton.LeftButton and 
+
+            # Handle dragging or resizing
+            if (event.buttons() & Qt.MouseButton.LeftButton and
                 state.drag_start_pos and state.selected_annotation):
-                self._handle_drag(pos)
-                
+                if state.resize_handle:
+                    self._handle_resize(pos)
+                else:
+                    self._handle_drag(pos)
+
         except Exception as e:
             logger.error(f"Error in mouse move event: {e}")
             
@@ -179,7 +186,103 @@ class PDFViewport(QWidget):
             (doc_coords[2] - doc_coords[0]) * self.pdf_handler.zoom_level,
             (doc_coords[3] - doc_coords[1]) * self.pdf_handler.zoom_level
         )
-        
+
+    def _get_resize_handle(self, viewport_pos: QPointF, viewport_rect: QRectF) -> Optional[str]:
+        """Get the resize handle at the given viewport position"""
+        handle_size = HANDLE_SIZE
+
+        corners = [
+            (viewport_rect.topLeft(), 'top-left'),
+            (viewport_rect.topRight(), 'top-right'),
+            (viewport_rect.bottomLeft(), 'bottom-left'),
+            (viewport_rect.bottomRight(), 'bottom-right')
+        ]
+
+        for corner_pos, handle_name in corners:
+            handle_rect = QRectF(
+                corner_pos.x() - handle_size / 2,
+                corner_pos.y() - handle_size / 2,
+                handle_size,
+                handle_size
+            )
+            if handle_rect.contains(viewport_pos):
+                return handle_name
+        return None
+
+    def _handle_resize(self, pos: QPointF) -> None:
+        """Handle resize operations"""
+        try:
+            state = self.annotation_manager.state
+            if not state.drag_start_pos or not state.drag_start_rect or not state.selected_annotation:
+                return
+
+            # Get viewport delta
+            viewport_delta = pos - state.drag_start_pos
+
+            # Convert to document space
+            doc_delta_x = viewport_delta.x() / self.pdf_handler.zoom_level
+            doc_delta_y = viewport_delta.y() / self.pdf_handler.zoom_level
+
+            # Get original dimensions
+            orig_rect = state.drag_start_rect
+            orig_width = orig_rect.width()
+            orig_height = orig_rect.height()
+
+            # Get aspect ratio
+            aspect_ratio = state.selected_annotation.content.get('aspect_ratio', 1.0)
+
+            # Calculate new size based on handle
+            if state.resize_handle == 'bottom-right':
+                new_width = max(MIN_SIZE / self.pdf_handler.zoom_level, orig_width + doc_delta_x)
+                new_height = new_width / aspect_ratio
+                new_rect = QRectF(
+                    orig_rect.left(),
+                    orig_rect.top(),
+                    new_width,
+                    new_height
+                )
+            elif state.resize_handle == 'top-left':
+                new_width = max(MIN_SIZE / self.pdf_handler.zoom_level, orig_width - doc_delta_x)
+                new_height = new_width / aspect_ratio
+                new_rect = QRectF(
+                    orig_rect.right() - new_width,
+                    orig_rect.bottom() - new_height,
+                    new_width,
+                    new_height
+                )
+            elif state.resize_handle == 'bottom-left':
+                new_width = max(MIN_SIZE / self.pdf_handler.zoom_level, orig_width - doc_delta_x)
+                new_height = new_width / aspect_ratio
+                new_rect = QRectF(
+                    orig_rect.right() - new_width,
+                    orig_rect.top(),
+                    new_width,
+                    new_height
+                )
+            elif state.resize_handle == 'top-right':
+                new_width = max(MIN_SIZE / self.pdf_handler.zoom_level, orig_width + doc_delta_x)
+                new_height = new_width / aspect_ratio
+                new_rect = QRectF(
+                    orig_rect.left(),
+                    orig_rect.bottom() - new_height,
+                    new_width,
+                    new_height
+                )
+            else:
+                return
+
+            # Update annotation with new rect
+            state.selected_annotation.rect = (
+                new_rect.left(),
+                new_rect.top(),
+                new_rect.right(),
+                new_rect.bottom()
+            )
+            self.update()
+
+        except Exception as e:
+            logger.error(f"Error handling resize: {e}")
+
     def update_page_display(self) -> None:
         """Update the page display with current zoom"""
         if not self.pdf_handler.document:
@@ -352,17 +455,17 @@ class PDFViewport(QWidget):
             if metadata_data:
                 metadata = json.loads(bytes(metadata_data.data()).decode('utf-8'))
                 aspect_ratio = metadata.get('aspect_ratio', 1.0)
+                original_width = metadata.get('original_width', 100)
+                original_height = metadata.get('original_height', 100)
             else:
+                # Fallback: get dimensions from image data
                 img = QImage.fromData(sig_bytes)
                 if img.isNull():
                     event.ignore()
                     return
-                aspect_ratio = img.width() / img.height() if img.height() > 0 else 1.0
-
-            # Get image dimensions for proper scaling
-            img = QImage.fromData(sig_bytes)
-            original_width = img.width() if not img.isNull() else 100
-            original_height = img.height() if not img.isNull() else 100
+                original_width = img.width()
+                original_height = img.height()
+                aspect_ratio = original_width / original_height if original_height > 0 else 1.0
 
             # Get drop position
             pos = event.position()

@@ -249,12 +249,17 @@ class SignatureThumbnail(QLabel):
         mime_data.setData("application/x-signature", QByteArray(self.signature_data))
         mime_data.setText(self.signature_name)
 
-        # Add metadata as JSON
-        pixmap = self.pixmap()
-        aspect_ratio = pixmap.width() / pixmap.height() if pixmap and pixmap.height() > 0 else 1.0
+        # Add metadata as JSON - get dimensions from original image data
+        original_img = QImage.fromData(self.signature_data)
+        original_width = original_img.width() if not original_img.isNull() else 100
+        original_height = original_img.height() if not original_img.isNull() else 100
+        aspect_ratio = original_width / original_height if original_height > 0 else 1.0
+
         metadata = {
             'type': 'signature',
-            'aspect_ratio': aspect_ratio
+            'aspect_ratio': aspect_ratio,
+            'original_width': original_width,
+            'original_height': original_height
         }
         metadata_bytes = json.dumps(metadata).encode('utf-8')
         mime_data.setData("application/x-signature-metadata", QByteArray(metadata_bytes))
@@ -264,6 +269,7 @@ class SignatureThumbnail(QLabel):
         drag.setMimeData(mime_data)
 
         # Create drag pixmap (scaled for better visibility)
+        pixmap = self.pixmap()
         if pixmap:
             scaled_pixmap = pixmap.scaled(
                 64, 64,
