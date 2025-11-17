@@ -122,8 +122,13 @@ class PDFViewport(QWidget):
             state = self.annotation_manager.state
 
             # Handle hover effects
+            # Convert viewport coordinates to document coordinates
+            doc_pos = QPointF(
+                pos.x() / self.pdf_handler.zoom_level,
+                pos.y() / self.pdf_handler.zoom_level
+            )
             hovered = self.annotation_manager.get_annotation_at_position(
-                pos, self.pdf_handler.current_page
+                doc_pos, self.pdf_handler.current_page
             )
             if self.annotation_manager.update_hover(hovered):
                 self.update()
@@ -143,7 +148,8 @@ class PDFViewport(QWidget):
         """Handle mouse release events"""
         try:
             if event.button() == Qt.MouseButton.LeftButton:
-                self.annotation_manager.clear_state()
+                # Clear only drag/resize state, preserve selection
+                self.annotation_manager.clear_drag_state()
                 
         except Exception as e:
             logger.error(f"Error in mouse release event: {e}")

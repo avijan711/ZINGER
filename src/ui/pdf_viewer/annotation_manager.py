@@ -65,7 +65,13 @@ class AnnotationManager:
     def clear_state(self) -> None:
         """Clear the viewport state"""
         self.state = ViewportState()
-        
+
+    def clear_drag_state(self) -> None:
+        """Clear only drag/resize state, preserving selection and hover"""
+        self.state.drag_start_pos = None
+        self.state.drag_start_rect = None
+        self.state.resize_handle = None
+
     def start_drag(self, pos: QPointF, annotation: Annotation) -> None:
         """Start dragging an annotation"""
         self.state.drag_start_pos = pos
