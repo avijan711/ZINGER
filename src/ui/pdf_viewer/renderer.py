@@ -1,6 +1,6 @@
 """Handles rendering of PDF pages and annotations"""
 
-from PyQt6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap
+from PyQt6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap, QImage
 from PyQt6.QtCore import Qt, QRectF, QRect
 import fitz
 from typing import Optional, List
@@ -36,16 +36,17 @@ class PDFRenderer:
             
             # Render page to pixmap
             pix = page.get_pixmap(matrix=zoom_matrix, alpha=True)
-            
-            # Convert to QPixmap
-            self.page_pixmap = QPixmap.fromImage(QPixmap(
+
+            # Convert to QImage then QPixmap
+            qimage = QImage(
                 pix.samples,
                 pix.width,
                 pix.height,
                 pix.stride,
-                QPixmap.Format.Format_RGBA8888
-            ))
-            
+                QImage.Format.Format_RGBA8888
+            )
+            self.page_pixmap = QPixmap.fromImage(qimage)
+
             return self.page_pixmap
             
         except Exception as e:

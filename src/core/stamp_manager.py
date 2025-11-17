@@ -226,9 +226,9 @@ class StampManager(QObject):
             stamp_info = self.stamps[stamp_id]
             with open(stamp_info['file'], 'rb') as f:
                 return f.read(), stamp_info['name'], {
-                    'original_width': stamp_info['original_width'],
-                    'original_height': stamp_info['original_height'],
-                    'aspect_ratio': stamp_info['aspect_ratio'],
+                    'original_width': stamp_info.get('original_width', 100),
+                    'original_height': stamp_info.get('original_height', 100),
+                    'aspect_ratio': stamp_info.get('aspect_ratio', 1.0),
                     'color': stamp_info.get('color', '#000000')
                 }
         except Exception as e:
