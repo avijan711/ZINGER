@@ -96,8 +96,13 @@ class PDFViewport(QWidget):
                     return
             
             # Check if clicking on any annotation
+            # Convert viewport coordinates to document coordinates
+            doc_pos = QPointF(
+                pos.x() / self.pdf_handler.zoom_level,
+                pos.y() / self.pdf_handler.zoom_level
+            )
             clicked_annotation = self.annotation_manager.get_annotation_at_position(
-                pos, self.pdf_handler.current_page
+                doc_pos, self.pdf_handler.current_page
             )
             
             if clicked_annotation:
