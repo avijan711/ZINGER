@@ -3,11 +3,12 @@
 from PyQt6.QtWidgets import QWidget, QSizePolicy, QMenu
 from PyQt6.QtGui import (
     QPainter, QMouseEvent, QContextMenuEvent,
-    QDragEnterEvent, QDragMoveEvent, QDropEvent
+    QDragEnterEvent, QDragMoveEvent, QDropEvent, QImage
 )
-from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtCore import Qt, QPointF, QRectF, QByteArray
 from typing import Optional
 import logging
+import json
 
 from core.pdf_handler import PDFHandler, Annotation
 from .annotation_manager import AnnotationManager
@@ -197,18 +198,178 @@ class PDFViewport(QWidget):
             logger.error(f"Error updating page display: {e}")
             
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Handle drag enter events"""
+        """Handle drag enter events for stamps, signatures, and PDFs"""
+        mime_data = event.mimeData()
+
+        # Handle stamp and signature drops
+        if mime_data.hasFormat("application/x-stamp") or mime_data.hasFormat("application/x-signature"):
+            if self.pdf_handler.document:
+                event.acceptProposedAction()
+                return
+            else:
+                event.ignore()
+                return
+
+        # Delegate PDF drops to handler
         self.drag_drop_handler.handle_drag_enter(event)
-        
+
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         """Handle drag move events"""
-        # Use handle_drag_enter for move events as well to maintain consistency
+        mime_data = event.mimeData()
+
+        # Handle stamp and signature drops
+        if mime_data.hasFormat("application/x-stamp") or mime_data.hasFormat("application/x-signature"):
+            if self.pdf_handler.document:
+                event.acceptProposedAction()
+                return
+            else:
+                event.ignore()
+                return
+
+        # Delegate PDF drops to handler
         self.drag_drop_handler.handle_drag_enter(event)
-        
+
     def dropEvent(self, event: QDropEvent) -> None:
-        """Handle drop events"""
-        if self.drag_drop_handler.handle_drop(event):
-            self.update()
+        """Handle drop events for stamps, signatures, and PDFs"""
+        try:
+            mime_data = event.mimeData()
+
+            # Handle stamp drops
+            if mime_data.hasFormat("application/x-stamp"):
+                self._handle_stamp_drop(event)
+                return
+
+            # Handle signature drops
+            if mime_data.hasFormat("application/x-signature"):
+                self._handle_signature_drop(event)
+                return
+
+            # Delegate PDF drops to handler
+            if self.drag_drop_handler.handle_drop(event):
+                self.update()
+
+        except Exception as e:
+            logger.error(f"Error in dropEvent: {e}")
+            event.ignore()
+
+    def _handle_stamp_drop(self, event: QDropEvent) -> None:
+        """Handle stamp drop events"""
+        try:
+            if not self.pdf_handler.document:
+                event.ignore()
+                return
+
+            mime_data = event.mimeData()
+            stamp_data = mime_data.data("application/x-stamp")
+            metadata_data = mime_data.data("application/x-stamp-metadata")
+
+            if not stamp_data:
+                event.ignore()
+                return
+
+            stamp_name = mime_data.text()
+            stamp_bytes = bytes(stamp_data.data())
+
+            # Parse metadata
+            if metadata_data:
+                metadata = json.loads(bytes(metadata_data.data()).decode('utf-8'))
+                aspect_ratio = metadata.get('aspect_ratio', 1.0)
+                color = metadata.get('color', '#000000')
+            else:
+                img = QImage.fromData(stamp_bytes)
+                aspect_ratio = img.width() / img.height() if img.height() > 0 else 1.0
+                color = '#000000'
+
+            # Calculate position in document coordinates
+            pos = event.position()
+            doc_x = pos.x() / self.pdf_handler.zoom_level
+            doc_y = pos.y() / self.pdf_handler.zoom_level
+
+            # Create annotation
+            target_width = 100
+            doc_width = target_width / self.pdf_handler.zoom_level
+            doc_height = doc_width / aspect_ratio
+
+            annotation = Annotation(
+                type="stamp",
+                rect=(doc_x, doc_y, doc_x + doc_width, doc_y + doc_height),
+                content={
+                    "image_data": stamp_bytes,
+                    "name": stamp_name,
+                    "aspect_ratio": aspect_ratio,
+                    "color": color
+                },
+                page=self.pdf_handler.current_page
+            )
+
+            if self.pdf_handler.add_annotation(annotation):
+                event.setDropAction(Qt.DropAction.CopyAction)
+                event.accept()
+                self.update()
+            else:
+                event.ignore()
+
+        except Exception as e:
+            logger.error(f"Error handling stamp drop: {e}")
+            event.ignore()
+
+    def _handle_signature_drop(self, event: QDropEvent) -> None:
+        """Handle signature drop events"""
+        try:
+            if not self.pdf_handler.document:
+                event.ignore()
+                return
+
+            mime_data = event.mimeData()
+            sig_data = mime_data.data("application/x-signature")
+            metadata_data = mime_data.data("application/x-signature-metadata")
+
+            if not sig_data:
+                event.ignore()
+                return
+
+            sig_name = mime_data.text()
+            sig_bytes = bytes(sig_data.data())
+
+            # Parse metadata
+            if metadata_data:
+                metadata = json.loads(bytes(metadata_data.data()).decode('utf-8'))
+                aspect_ratio = metadata.get('aspect_ratio', 1.0)
+            else:
+                img = QImage.fromData(sig_bytes)
+                aspect_ratio = img.width() / img.height() if img.height() > 0 else 1.0
+
+            # Calculate position in document coordinates
+            pos = event.position()
+            doc_x = pos.x() / self.pdf_handler.zoom_level
+            doc_y = pos.y() / self.pdf_handler.zoom_level
+
+            # Create annotation
+            target_width = 100
+            doc_width = target_width / self.pdf_handler.zoom_level
+            doc_height = doc_width / aspect_ratio
+
+            annotation = Annotation(
+                type="signature",
+                rect=(doc_x, doc_y, doc_x + doc_width, doc_y + doc_height),
+                content={
+                    "image_data": sig_bytes,
+                    "name": sig_name,
+                    "aspect_ratio": aspect_ratio
+                },
+                page=self.pdf_handler.current_page
+            )
+
+            if self.pdf_handler.add_annotation(annotation):
+                event.setDropAction(Qt.DropAction.CopyAction)
+                event.accept()
+                self.update()
+            else:
+                event.ignore()
+
+        except Exception as e:
+            logger.error(f"Error handling signature drop: {e}")
+            event.ignore()
         
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """Handle context menu events"""

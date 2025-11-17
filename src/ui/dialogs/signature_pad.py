@@ -5,16 +5,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QPixmap, QImage,
-    QPainterPath, QMouseEvent
+    QPainterPath, QMouseEvent, QDrag
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QRect, QSize, QByteArray,
-    QBuffer, QIODevice
+    QBuffer, QIODevice, QMimeData
 )
 from datetime import datetime
 from PIL import Image
 from io import BytesIO
 import os
+import json
 
 from core.signature_manager import SignatureManager
 from config.constants import SUPPORTED_IMAGE_FORMATS, SIGNATURES_DIR
@@ -222,6 +223,58 @@ class SignatureThumbnail(QLabel):
                     background-color: #f8f9fa;
                 }
             """)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for selection and drag start"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Store the start position for drag detection
+            self.drag_start_position = event.pos()
+            # Let parent handle selection
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for drag and drop"""
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+
+        # Check if we've moved enough to start a drag
+        if not hasattr(self, 'drag_start_position'):
+            return
+
+        if (event.pos() - self.drag_start_position).manhattanLength() < 10:
+            return
+
+        # Create mime data with signature information
+        mime_data = QMimeData()
+        mime_data.setData("application/x-signature", QByteArray(self.signature_data))
+        mime_data.setText(self.signature_name)
+
+        # Add metadata as JSON
+        pixmap = self.pixmap()
+        aspect_ratio = pixmap.width() / pixmap.height() if pixmap and pixmap.height() > 0 else 1.0
+        metadata = {
+            'type': 'signature',
+            'aspect_ratio': aspect_ratio
+        }
+        metadata_bytes = json.dumps(metadata).encode('utf-8')
+        mime_data.setData("application/x-signature-metadata", QByteArray(metadata_bytes))
+
+        # Create drag object
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+
+        # Create drag pixmap (scaled for better visibility)
+        if pixmap:
+            scaled_pixmap = pixmap.scaled(
+                64, 64,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            drag.setPixmap(scaled_pixmap)
+            drag.setHotSpot(QPoint(scaled_pixmap.width() // 2, scaled_pixmap.height() // 2))
+
+        # Execute drag operation
+        drag.exec(Qt.DropAction.CopyAction)
 
 class SignaturePadDialog(QDialog):
     def __init__(self, parent=None):
