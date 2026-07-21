@@ -7,6 +7,9 @@ from PIL import Image
 from PyQt6.QtCore import QObject, pyqtSignal
 import uuid
 
+from core.image_processing import apply_edits, DEFAULT_EDIT_PARAMS
+from io import BytesIO
+
 class StampManager(QObject):
     # Signals
     stamp_added = pyqtSignal(str, str)  # stamp_id, category
@@ -15,11 +18,13 @@ class StampManager(QObject):
     stamp_color_changed = pyqtSignal(str, str)  # stamp_id, new_color
     category_added = pyqtSignal(str)  # category
     category_removed = pyqtSignal(str)  # category
+    stamp_updated = pyqtSignal(str)  # stamp_id (edits re-applied)
 
     def __init__(self, storage_path: str):
         super().__init__()
         self.storage_path = Path(storage_path)
         self.stamps_dir = self.storage_path / "stamps"
+        self.originals_dir = self.stamps_dir / "originals"
         self.metadata_file = self.storage_path / "stamps_metadata.json"
         self.stamps: Dict[str, Dict] = {}  # stamp_id -> stamp_info
         self.categories: Dict[str, List[str]] = {}  # category -> [stamp_ids]
@@ -31,7 +36,8 @@ class StampManager(QObject):
         """Initialize the stamp storage directory and metadata"""
         # Create directories if they don't exist
         self.stamps_dir.mkdir(parents=True, exist_ok=True)
-        
+        self.originals_dir.mkdir(parents=True, exist_ok=True)
+
         # Load or create metadata
         if self.metadata_file.exists():
             try:
@@ -60,47 +66,48 @@ class StampManager(QObject):
         except Exception as e:
             print(f"Error saving stamps metadata: {e}")
 
-    def import_stamp(self, path: str, name: str, category: str = "General") -> Optional[str]:
-        """Import a stamp from an image file"""
+    def import_stamp(self, path: str, name: str, category: str = "General",
+                     edits: Optional[Dict] = None) -> Optional[str]:
+        """Import a stamp, keeping the untouched original alongside the
+        processed image so edits can be re-applied later."""
         try:
-            # Ensure category exists
             if category not in self.categories:
                 self.add_category(category)
 
-            # Generate unique ID
             stamp_id = str(uuid.uuid4())
-            
-            # Process and save image
+            edits = dict(DEFAULT_EDIT_PARAMS, **(edits or {}))
+
+            # Normalize the source to RGBA PNG and keep it as the original
             with Image.open(path) as img:
-                # Convert to RGBA if needed
                 if img.mode != 'RGBA':
                     img = img.convert('RGBA')
-                
-                # Get original dimensions
-                width, height = img.size
-                
-                # Save processed image
-                stamp_path = self.stamps_dir / f"{stamp_id}.png"
-                img.save(stamp_path, 'PNG')
+                original_path = self.originals_dir / f"{stamp_id}.png"
+                img.save(original_path, 'PNG')
 
-            # Update metadata
+            processed = apply_edits(original_path.read_bytes(), edits)
+            if processed is None:
+                original_path.unlink(missing_ok=True)
+                return None
+
+            stamp_path = self.stamps_dir / f"{stamp_id}.png"
+            stamp_path.write_bytes(processed)
+            with Image.open(BytesIO(processed)) as out:
+                width, height = out.size
+
             self.stamps[stamp_id] = {
                 'name': name,
                 'category': category,
                 'file': str(stamp_path),
+                'original_file': str(original_path),
+                'edits': edits,
                 'original_width': width,
                 'original_height': height,
                 'aspect_ratio': width / height,
-                'color': '#000000'  # Default black color
+                'color': '#000000'
             }
             self.categories[category].append(stamp_id)
-            
-            # Save changes
             self._save_metadata()
-            
-            # Emit signal
             self.stamp_added.emit(stamp_id, category)
-            
             return stamp_id
         except Exception as e:
             print(f"Error importing stamp: {e}")
@@ -174,6 +181,49 @@ class StampManager(QObject):
             return True
         except Exception as e:
             print(f"Error updating stamp color: {e}")
+            return False
+
+    def get_original_data(self, stamp_id: str) -> Optional[bytes]:
+        """Return the untouched original image bytes, migrating legacy
+        stamps (no stored original) by adopting their processed file."""
+        if stamp_id not in self.stamps:
+            return None
+        try:
+            info = self.stamps[stamp_id]
+            original_path = Path(info['original_file']) if 'original_file' in info else None
+            if original_path is None or not original_path.exists():
+                original_path = self.originals_dir / f"{stamp_id}.png"
+                shutil.copyfile(info['file'], original_path)
+                info['original_file'] = str(original_path)
+                info.setdefault('edits', dict(DEFAULT_EDIT_PARAMS))
+                self._save_metadata()
+            return original_path.read_bytes()
+        except Exception as e:
+            print(f"Error reading original stamp data: {e}")
+            return None
+
+    def update_stamp_edits(self, stamp_id: str, params: Dict) -> bool:
+        """Re-apply edit params to the original and refresh the processed file."""
+        original = self.get_original_data(stamp_id)
+        if original is None:
+            return False
+        try:
+            processed = apply_edits(original, params)
+            if processed is None:
+                return False
+            info = self.stamps[stamp_id]
+            Path(info['file']).write_bytes(processed)
+            with Image.open(BytesIO(processed)) as out:
+                width, height = out.size
+            info['edits'] = dict(DEFAULT_EDIT_PARAMS, **params)
+            info['original_width'] = width
+            info['original_height'] = height
+            info['aspect_ratio'] = width / height
+            self._save_metadata()
+            self.stamp_updated.emit(stamp_id)
+            return True
+        except Exception as e:
+            print(f"Error updating stamp edits: {e}")
             return False
 
     def add_category(self, category: str) -> bool:
