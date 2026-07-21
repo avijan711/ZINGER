@@ -1,12 +1,13 @@
 """Handles rendering of PDF pages and annotations"""
 
 from PyQt6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap, QImage
-from PyQt6.QtCore import Qt, QRectF, QRect
+from PyQt6.QtCore import Qt, QRectF, QRect, QPointF
 import fitz
 from typing import Optional, List
 import logging
 from .image_cache import ImageCache
 from .annotation_manager import AnnotationManager
+from .constants import ROTATE_HANDLE_OFFSET, ROTATE_HANDLE_RADIUS
 from core.pdf_handler import PDFHandler, Annotation
 
 logger = logging.getLogger(__name__)
@@ -64,11 +65,10 @@ class PDFRenderer:
         except Exception as e:
             logger.error(f"Error rendering annotations: {e}")
             
-    def _render_annotation(self, painter: QPainter, annotation: Annotation, 
+    def _render_annotation(self, painter: QPainter, annotation: Annotation,
                          zoom_level: float, is_selected: bool) -> None:
-        """Render a single annotation"""
+        """Render a single annotation (stamp or signature)"""
         try:
-            # Convert coordinates
             doc_coords = [float(x) for x in annotation.rect]
             viewport_rect = QRectF(
                 doc_coords[0] * zoom_level,
@@ -76,26 +76,52 @@ class PDFRenderer:
                 (doc_coords[2] - doc_coords[0]) * zoom_level,
                 (doc_coords[3] - doc_coords[1]) * zoom_level
             )
-            
-            if annotation.type == "stamp":
-                # Get color from annotation content
-                color = annotation.content.get("color")
-                logger.debug(f"Rendering stamp annotation with content: {annotation.content}")
-                logger.debug(f"Using color: {color}")
-                img = self.image_cache.get_scaled_image(
-                    annotation.content["image_data"],
-                    int(viewport_rect.width()),
-                    int(viewport_rect.height()),
-                    color
-                )
-                painter.drawImage(viewport_rect, img)
-                
-                if is_selected:
-                    self._draw_selection_handles(painter, viewport_rect)
-                    
+
+            image_data = (annotation.content.get("image_data")
+                          or annotation.content.get("signature_data"))
+            if not image_data:
+                return
+
+            # Only stamps carry a tint color
+            color = annotation.content.get("color") if annotation.type == "stamp" else None
+            rotation = float(annotation.content.get("rotation", 0.0))
+            opacity = float(annotation.content.get("opacity", 1.0))
+
+            img = self.image_cache.get_scaled_image(
+                image_data,
+                max(1, int(viewport_rect.width())),
+                max(1, int(viewport_rect.height())),
+                color
+            )
+
+            painter.save()
+            if rotation % 360 != 0:
+                center = viewport_rect.center()
+                painter.translate(center)
+                painter.rotate(rotation)
+                painter.translate(-center)
+            painter.setOpacity(opacity)
+            painter.drawImage(viewport_rect, img)
+            painter.setOpacity(1.0)
+
+            if is_selected:
+                self._draw_selection_handles(painter, viewport_rect)
+                self._draw_rotate_handle(painter, viewport_rect)
+            painter.restore()
+
         except Exception as e:
             logger.error(f"Error rendering annotation: {e}")
-            
+
+    def _draw_rotate_handle(self, painter: QPainter, viewport_rect: QRectF) -> None:
+        """Draw the rotate handle above the top-center of the selection"""
+        top_center = QPointF(viewport_rect.center().x(), viewport_rect.top())
+        handle_center = QPointF(top_center.x(),
+                                top_center.y() - ROTATE_HANDLE_OFFSET)
+        painter.setPen(QPen(Qt.GlobalColor.blue, 1))
+        painter.drawLine(top_center, handle_center)
+        painter.setBrush(Qt.GlobalColor.white)
+        painter.drawEllipse(handle_center, ROTATE_HANDLE_RADIUS, ROTATE_HANDLE_RADIUS)
+
     def _draw_selection_handles(self, painter: QPainter, viewport_rect: QRectF) -> None:
         """Draw selection handles on the annotation"""
         # Draw border
