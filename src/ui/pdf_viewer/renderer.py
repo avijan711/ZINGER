@@ -95,19 +95,21 @@ class PDFRenderer:
             )
 
             painter.save()
-            if rotation % 360 != 0:
-                center = viewport_rect.center()
-                painter.translate(center)
-                painter.rotate(rotation)
-                painter.translate(-center)
-            painter.setOpacity(opacity)
-            painter.drawImage(viewport_rect, img)
-            painter.setOpacity(1.0)
+            try:
+                if rotation % 360 != 0:
+                    center = viewport_rect.center()
+                    painter.translate(center)
+                    painter.rotate(rotation)
+                    painter.translate(-center)
+                painter.setOpacity(opacity)
+                painter.drawImage(viewport_rect, img)
+                painter.setOpacity(1.0)
 
-            if is_selected:
-                self._draw_selection_handles(painter, viewport_rect)
-                self._draw_rotate_handle(painter, viewport_rect)
-            painter.restore()
+                if is_selected:
+                    self._draw_selection_handles(painter, viewport_rect)
+                    self._draw_rotate_handle(painter, viewport_rect)
+            finally:
+                painter.restore()
 
         except Exception as e:
             logger.error(f"Error rendering annotation: {e}")
