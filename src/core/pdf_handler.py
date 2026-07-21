@@ -1,9 +1,10 @@
 import fitz
 import os
-import tempfile
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from PyQt6.QtCore import QObject, pyqtSignal
+
+from core.image_processing import bake_rotation_opacity, rotated_bounding_size
 
 @dataclass
 class PageInfo:
@@ -192,33 +193,30 @@ class PDFHandler(QObject):
             doc_copy = fitz.open()
             doc_copy.insert_pdf(self.document)
 
-            # Apply all annotations
+            # Apply all annotations (stamps and signatures are both images)
             for annotation in self.annotations:
                 page = doc_copy[annotation.page]
-                if annotation.type == 'stamp':
-                    # Add stamp annotation
-                    rect = fitz.Rect(*annotation.rect)
-                    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                    try:
-                        tmp.write(annotation.content['image_data'])
-                        tmp.flush()
-                        tmp.close()
-                        page.insert_image(rect, filename=tmp.name)
-                    finally:
-                        if os.path.exists(tmp.name):
-                            os.unlink(tmp.name)
-                elif annotation.type == 'signature':
-                    # Add signature annotation
-                    rect = fitz.Rect(*annotation.rect)
-                    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                    try:
-                        tmp.write(annotation.content['signature_data'])
-                        tmp.flush()
-                        tmp.close()
-                        page.insert_image(rect, filename=tmp.name)
-                    finally:
-                        if os.path.exists(tmp.name):
-                            os.unlink(tmp.name)
+                image_data = (annotation.content.get('image_data')
+                              or annotation.content.get('signature_data'))
+                if not image_data:
+                    continue
+
+                rect = fitz.Rect(*annotation.rect)
+                rotation = float(annotation.content.get('rotation', 0.0))
+                opacity = float(annotation.content.get('opacity', 1.0))
+
+                if rotation % 360 != 0 or opacity < 1.0:
+                    image_data = bake_rotation_opacity(image_data, rotation, opacity)
+                    if image_data is None:
+                        continue
+                    if rotation % 360 != 0:
+                        w, h = rotated_bounding_size(rect.width, rect.height, rotation)
+                        cx = (rect.x0 + rect.x1) / 2
+                        cy = (rect.y0 + rect.y1) / 2
+                        rect = fitz.Rect(cx - w / 2, cy - h / 2,
+                                         cx + w / 2, cy + h / 2)
+
+                page.insert_image(rect, stream=image_data)
 
             # Ensure path has .pdf extension
             base, ext = os.path.splitext(path)
