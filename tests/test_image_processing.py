@@ -1,8 +1,9 @@
 """Tests for the headless stamp image-processing module."""
+import math
 from io import BytesIO
 from PIL import Image
 
-from core.image_processing import remove_background, auto_trim, apply_edits, DEFAULT_EDIT_PARAMS
+from core.image_processing import remove_background, auto_trim, apply_edits, DEFAULT_EDIT_PARAMS, bake_rotation_opacity, rotated_bounding_size
 
 
 def make_image(pixels, size):
@@ -117,3 +118,43 @@ def test_apply_edits_empty_crop_returns_none():
 
 def test_apply_edits_corrupt_bytes_returns_none():
     assert apply_edits(b'not an image', dict(DEFAULT_EDIT_PARAMS)) is None
+
+
+def test_bake_opacity_halves_alpha():
+    img = Image.new('RGBA', (2, 2), (0, 0, 0, 200))
+    out = bake_rotation_opacity(png_bytes(img), 0.0, 0.5)
+    result = Image.open(BytesIO(out))
+    assert result.getpixel((0, 0))[3] == 100
+
+
+def test_bake_rotation_90_swaps_size():
+    img = Image.new('RGBA', (10, 4), (0, 0, 0, 255))
+    out = bake_rotation_opacity(png_bytes(img), 90.0, 1.0)
+    assert Image.open(BytesIO(out)).size == (4, 10)
+
+
+def test_bake_no_change_roundtrips():
+    img = Image.new('RGBA', (3, 3), (10, 20, 30, 255))
+    out = bake_rotation_opacity(png_bytes(img), 0.0, 1.0)
+    assert Image.open(BytesIO(out)).getpixel((1, 1)) == (10, 20, 30, 255)
+
+
+def test_bake_corrupt_bytes_returns_none():
+    assert bake_rotation_opacity(b'garbage', 45.0, 0.5) is None
+
+
+def test_rotated_bounding_size_90():
+    w, h = rotated_bounding_size(10, 4, 90)
+    assert math.isclose(w, 4, abs_tol=1e-9)
+    assert math.isclose(h, 10, abs_tol=1e-9)
+
+
+def test_rotated_bounding_size_45():
+    w, h = rotated_bounding_size(10, 10, 45)
+    expected = 10 * math.sqrt(2)
+    assert math.isclose(w, expected, rel_tol=1e-9)
+    assert math.isclose(h, expected, rel_tol=1e-9)
+
+
+def test_rotated_bounding_size_0_is_identity():
+    assert rotated_bounding_size(7, 3, 0) == (7, 3)

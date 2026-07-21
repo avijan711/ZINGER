@@ -2,6 +2,7 @@
 
 No Qt imports — this module must stay headless and unit-testable.
 """
+import math
 from io import BytesIO
 from typing import Optional, Tuple
 from PIL import Image
@@ -72,3 +73,31 @@ def apply_edits(original_bytes: bytes, params: dict) -> Optional[bytes]:
         return buf.getvalue()
     except Exception:
         return None
+
+
+def bake_rotation_opacity(image_bytes: bytes, rotation: float,
+                          opacity: float) -> Optional[bytes]:
+    """Bake clockwise rotation and opacity into PNG bytes for saving."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as src:
+            img = src.convert('RGBA')
+        if opacity < 1.0:
+            opacity = max(0.0, opacity)
+            alpha = img.getchannel('A').point(lambda a: int(a * opacity))
+            img.putalpha(alpha)
+        if rotation % 360 != 0:
+            img = img.rotate(-rotation, expand=True,
+                             resample=Image.Resampling.BICUBIC)
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+def rotated_bounding_size(width: float, height: float,
+                          rotation: float) -> Tuple[float, float]:
+    """Axis-aligned bounding-box size of a rect rotated by `rotation` degrees."""
+    theta = math.radians(rotation % 360)
+    c, s = abs(math.cos(theta)), abs(math.sin(theta))
+    return width * c + height * s, width * s + height * c
