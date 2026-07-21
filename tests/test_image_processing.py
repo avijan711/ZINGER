@@ -158,3 +158,24 @@ def test_rotated_bounding_size_45():
 
 def test_rotated_bounding_size_0_is_identity():
     assert rotated_bounding_size(7, 3, 0) == (7, 3)
+
+
+def test_apply_edits_rotation_is_clockwise():
+    # Horizontal strip [red, blue]; 90 deg clockwise puts red at the TOP.
+    img = Image.new('RGBA', (2, 1))
+    img.putdata([(255, 0, 0, 255), (0, 0, 255, 255)])
+    out = apply_edits(png_bytes(img), {'rotation': 90, 'crop': None, 'bg_tolerance': 0})
+    result = Image.open(BytesIO(out))
+    assert result.size == (1, 2)
+    assert result.getpixel((0, 0)) == (255, 0, 0, 255)   # red on top
+    assert result.getpixel((0, 1)) == (0, 0, 255, 255)   # blue below
+
+
+def test_bake_rotation_is_clockwise():
+    img = Image.new('RGBA', (2, 1))
+    img.putdata([(255, 0, 0, 255), (0, 0, 255, 255)])
+    out = bake_rotation_opacity(png_bytes(img), 90.0, 1.0)
+    result = Image.open(BytesIO(out))
+    assert result.size == (1, 2)
+    assert result.getpixel((0, 0)) == (255, 0, 0, 255)
+    assert result.getpixel((0, 1)) == (0, 0, 255, 255)
