@@ -585,17 +585,3 @@ class PDFViewport(QWidget):
                 logger.debug("Successfully reset stamp color to default")
         except Exception as e:
             logger.error(f"Error resetting stamp color: {e}")
-            
-    def _reset_stamp_color(self, annotation: Annotation) -> None:
-        """Reset a stamp annotation's color to default"""
-        try:
-            if "color" in annotation.content:
-                # Update to default color
-                annotation.content["color"] = "#000000"
-                # Clear image cache to force redraw
-                self.image_cache.clear()
-                # Update display
-                self.update()
-                logger.debug("Reset stamp color to default")
-        except Exception as e:
-            logger.error(f"Error resetting stamp color: {e}")
