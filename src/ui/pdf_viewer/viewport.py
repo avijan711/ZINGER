@@ -1,6 +1,7 @@
 """PDF viewport widget for displaying and interacting with PDF documents"""
 
-from PyQt6.QtWidgets import QWidget, QSizePolicy, QMenu
+import math
+from PyQt6.QtWidgets import QWidget, QSizePolicy, QMenu, QApplication
 from PyQt6.QtGui import (
     QPainter, QMouseEvent, QContextMenuEvent,
     QDragEnterEvent, QDragMoveEvent, QDropEvent, QImage
@@ -15,6 +16,7 @@ from .annotation_manager import AnnotationManager
 from .image_cache import ImageCache
 from .renderer import PDFRenderer
 from .drag_drop_handler import DragDropHandler
+from .constants import ROTATE_HANDLE_OFFSET, ROTATE_HANDLE_RADIUS
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +90,14 @@ class PDFViewport(QWidget):
             if state.selected_annotation:
                 doc_coords = [float(x) for x in state.selected_annotation.rect]
                 viewport_rect = self._get_viewport_rect(doc_coords)
-                
-                # Check for handle hit
+
+                # Check rotate handle first (sits above the rect)
+                if self._get_rotate_handle_rect(viewport_rect).contains(pos):
+                    self.annotation_manager.start_resize(
+                        pos, state.selected_annotation, 'rotate')
+                    return
+
+                # Check for corner handle hit
                 handle = self._get_resize_handle(pos, viewport_rect)
                 if handle:
                     self.annotation_manager.start_resize(pos, state.selected_annotation, handle)
@@ -136,7 +144,9 @@ class PDFViewport(QWidget):
             # Handle dragging or resizing
             if (event.buttons() & Qt.MouseButton.LeftButton and
                 state.drag_start_pos and state.selected_annotation):
-                if state.resize_handle:
+                if state.resize_handle == 'rotate':
+                    self._handle_rotate(pos)
+                elif state.resize_handle:
                     self._handle_resize(pos)
                 else:
                     self._handle_drag(pos)
@@ -219,6 +229,31 @@ class PDFViewport(QWidget):
             if handle_rect.contains(viewport_pos):
                 return handle_name
         return None
+
+    def _get_rotate_handle_rect(self, viewport_rect: QRectF) -> QRectF:
+        """Hit area of the rotate handle (axis-aligned, like all hit-testing)"""
+        cx = viewport_rect.center().x()
+        cy = viewport_rect.top() - ROTATE_HANDLE_OFFSET
+        r = ROTATE_HANDLE_RADIUS + 3  # slightly generous grab area
+        return QRectF(cx - r, cy - r, r * 2, r * 2)
+
+    def _handle_rotate(self, pos: QPointF) -> None:
+        """Rotate the selected annotation to face the cursor; Shift snaps 15 deg"""
+        try:
+            state = self.annotation_manager.state
+            if not state.selected_annotation:
+                return
+            doc_coords = [float(x) for x in state.selected_annotation.rect]
+            center = self._get_viewport_rect(doc_coords).center()
+            # 0 deg when the cursor is straight above center, clockwise-positive
+            angle = math.degrees(math.atan2(pos.x() - center.x(),
+                                            center.y() - pos.y()))
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+                angle = round(angle / 15.0) * 15.0
+            state.selected_annotation.content['rotation'] = angle % 360
+            self.update()
+        except Exception as e:
+            logger.error(f"Error handling rotate: {e}")
 
     def _handle_resize(self, pos: QPointF) -> None:
         """Handle resize operations"""
@@ -523,8 +558,12 @@ class PDFViewport(QWidget):
         """Handle context menu events"""
         try:
             pos = event.pos()
+            doc_pos = QPointF(
+                pos.x() / self.pdf_handler.zoom_level,
+                pos.y() / self.pdf_handler.zoom_level
+            )
             clicked_annotation = self.annotation_manager.get_annotation_at_position(
-                QPointF(pos), self.pdf_handler.current_page
+                doc_pos, self.pdf_handler.current_page
             )
             
             if clicked_annotation:
@@ -545,7 +584,30 @@ class PDFViewport(QWidget):
                     reset_color_action.triggered.connect(
                         lambda: self._reset_stamp_color(clicked_annotation)
                     )
-                
+
+                # Opacity presets
+                opacity_menu = menu.addMenu("Opacity")
+                current_opacity = float(clicked_annotation.content.get('opacity', 1.0))
+                for percent in (100, 75, 50, 25):
+                    action = opacity_menu.addAction(f"{percent}%")
+                    action.setCheckable(True)
+                    action.setChecked(abs(current_opacity - percent / 100) < 0.01)
+                    action.triggered.connect(
+                        lambda checked, p=percent, a=clicked_annotation:
+                        self._set_annotation_opacity(a, p / 100)
+                    )
+
+                # Rotation
+                rotate_menu = menu.addMenu("Rotate")
+                rotate_menu.addAction("90° Clockwise").triggered.connect(
+                    lambda: self._rotate_annotation(clicked_annotation, 90))
+                rotate_menu.addAction("90° Counter-clockwise").triggered.connect(
+                    lambda: self._rotate_annotation(clicked_annotation, -90))
+                rotate_menu.addAction("Reset Rotation").triggered.connect(
+                    lambda: self._set_annotation_rotation(clicked_annotation, 0.0))
+
+                menu.addSeparator()
+
                 # Add remove action
                 remove_action = menu.addAction("Remove")
                 remove_action.triggered.connect(
@@ -567,7 +629,20 @@ class PDFViewport(QWidget):
                 
         except Exception as e:
             logger.error(f"Error removing annotation: {e}")
-            
+
+    def _set_annotation_opacity(self, annotation: Annotation, opacity: float) -> None:
+        annotation.content['opacity'] = opacity
+        self.update()
+
+    def _rotate_annotation(self, annotation: Annotation, delta: float) -> None:
+        current = float(annotation.content.get('rotation', 0.0))
+        annotation.content['rotation'] = (current + delta) % 360
+        self.update()
+
+    def _set_annotation_rotation(self, annotation: Annotation, rotation: float) -> None:
+        annotation.content['rotation'] = rotation
+        self.update()
+
     def _reset_stamp_color(self, annotation: Annotation) -> None:
         """Reset a stamp annotation's color to default black"""
         try:
