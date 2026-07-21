@@ -1,12 +1,14 @@
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QPushButton, QComboBox, QFileDialog, QInputDialog,
-    QMessageBox, QFrame, QColorDialog, QApplication
+    QMessageBox, QFrame, QColorDialog, QApplication,
+    QDialog, QMenu
 )
 from PyQt6.QtGui import QPixmap, QDrag, QImage, QColor
 from PyQt6.QtCore import Qt, QMimeData, QSize, QByteArray, QPoint
 from core.stamp_manager import StampManager
 from .flow_layout import FlowLayout
+from .dialogs.stamp_editor import StampEditorDialog
 import json
 
 class StampThumbnail(QLabel):
@@ -182,6 +184,27 @@ class StampThumbnail(QLabel):
         # Execute drag operation
         drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
 
+    def contextMenuEvent(self, event):
+        """Right-click menu: Edit / Rename / Delete / Change Color."""
+        if not self.gallery:
+            return
+        self.gallery.select_stamp(self)
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit...")
+        rename_action = menu.addAction("Rename...")
+        color_action = menu.addAction("Change Color...")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete")
+        chosen = menu.exec(event.globalPos())
+        if chosen == edit_action:
+            self.gallery.edit_stamp(self.stamp_id)
+        elif chosen == rename_action:
+            self.gallery.rename_stamp()
+        elif chosen == color_action:
+            self.show_color_picker()
+        elif chosen == delete_action:
+            self.gallery.delete_stamp()
+
 class StampGallery(QWidget):
     def __init__(self, storage_path: str):
         super().__init__()
@@ -199,6 +222,7 @@ class StampGallery(QWidget):
         
         # Clear image cache when colors change
         self.stamp_manager.stamp_color_changed.connect(self.clear_image_cache)
+        self.stamp_manager.stamp_updated.connect(self.on_stamp_updated)
 
     def init_ui(self):
         """Initialize the user interface"""
@@ -432,15 +456,21 @@ class StampGallery(QWidget):
             )
             
             if ok and name:
+                try:
+                    with open(file_path, 'rb') as f:
+                        source_bytes = f.read()
+                except OSError:
+                    QMessageBox.critical(self, "Error", "Could not read the image file.")
+                    return
+                editor = StampEditorDialog(source_bytes, parent=self)
+                if editor.exec() != QDialog.DialogCode.Accepted:
+                    return
                 category = self.category_combo.currentText()
-                stamp_id = self.stamp_manager.import_stamp(file_path, name, category)
-                
+                stamp_id = self.stamp_manager.import_stamp(
+                    file_path, name, category, edits=editor.params
+                )
                 if not stamp_id:
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        "Failed to import stamp."
-                    )
+                    QMessageBox.critical(self, "Error", "Failed to import stamp.")
 
     def add_category(self):
         """Add a new category"""
@@ -578,8 +608,25 @@ class StampGallery(QWidget):
     def on_stamp_color_changed(self, stamp_id: str, new_color: str):
         """Handle stamp color changed signal"""
         self.load_stamps(self.category_combo.currentText())
-        
-    def clear_image_cache(self, stamp_id: str, new_color: str):
+
+    def edit_stamp(self, stamp_id: str):
+        """Open the non-destructive editor for an existing stamp."""
+        original = self.stamp_manager.get_original_data(stamp_id)
+        if original is None:
+            QMessageBox.critical(self, "Error", "Could not load the stamp's original image.")
+            return
+        params = self.stamp_manager.stamps.get(stamp_id, {}).get('edits')
+        editor = StampEditorDialog(original, params=params, parent=self)
+        if editor.exec() == QDialog.DialogCode.Accepted:
+            if not self.stamp_manager.update_stamp_edits(stamp_id, editor.params):
+                QMessageBox.critical(self, "Error", "Failed to update the stamp.")
+
+    def on_stamp_updated(self, stamp_id: str):
+        """Reload thumbnails and clear viewer caches after an edit."""
+        self.load_stamps(self.category_combo.currentText())
+        self.clear_image_cache()
+
+    def clear_image_cache(self, *args):
         """Clear the image cache when a stamp's color changes"""
         try:
             # Find the main window
