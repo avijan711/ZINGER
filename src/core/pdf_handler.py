@@ -1,10 +1,13 @@
 import fitz
 import os
+import logging
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.image_processing import bake_rotation_opacity, rotated_bounding_size
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class PageInfo:
@@ -199,6 +202,9 @@ class PDFHandler(QObject):
                 image_data = (annotation.content.get('image_data')
                               or annotation.content.get('signature_data'))
                 if not image_data:
+                    logger.warning(
+                        "Skipping %s annotation on page %d during save: "
+                        "no image data", annotation.type, annotation.page)
                     continue
 
                 rect = fitz.Rect(*annotation.rect)
@@ -208,6 +214,10 @@ class PDFHandler(QObject):
                 if rotation % 360 != 0 or opacity < 1.0:
                     image_data = bake_rotation_opacity(image_data, rotation, opacity)
                     if image_data is None:
+                        logger.warning(
+                            "Skipping %s annotation on page %d during save: "
+                            "bake_rotation_opacity failed", annotation.type,
+                            annotation.page)
                         continue
                     if rotation % 360 != 0:
                         w, h = rotated_bounding_size(rect.width, rect.height, rotation)

@@ -104,12 +104,14 @@ class PDFRenderer:
                 painter.setOpacity(opacity)
                 painter.drawImage(viewport_rect, img)
                 painter.setOpacity(1.0)
-
-                if is_selected:
-                    self._draw_selection_handles(painter, viewport_rect)
-                    self._draw_rotate_handle(painter, viewport_rect)
             finally:
                 painter.restore()
+
+            # Handles are always axis-aligned to match viewport.py's
+            # axis-aligned hit-testing, even when the annotation is rotated.
+            if is_selected:
+                self._draw_selection_handles(painter, viewport_rect)
+                self._draw_rotate_handle(painter, viewport_rect)
 
         except Exception as e:
             logger.error(f"Error rendering annotation: {e}")

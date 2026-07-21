@@ -77,7 +77,7 @@ painter.drawImage(rect, img)
 painter.restore()
 ```
 
-Selection border and corner handles are drawn inside the same transform so they visually track the rotated stamp.
+Selection border, corner handles, and the rotate handle are drawn axis-aligned (outside the rotation transform) so they exactly match the axis-aligned hit areas; only the annotation image rotates.
 
 ### 7. Interaction — `src/ui/pdf_viewer/viewport.py`
 
