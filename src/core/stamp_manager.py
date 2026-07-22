@@ -25,6 +25,7 @@ class StampManager(QObject):
         self.storage_path = Path(storage_path)
         self.stamps_dir = self.storage_path / "stamps"
         self.originals_dir = self.stamps_dir / "originals"
+        self.overlays_dir = self.stamps_dir / "overlays"
         self.metadata_file = self.storage_path / "stamps_metadata.json"
         self.stamps: Dict[str, Dict] = {}  # stamp_id -> stamp_info
         self.categories: Dict[str, List[str]] = {}  # category -> [stamp_ids]
@@ -37,6 +38,7 @@ class StampManager(QObject):
         # Create directories if they don't exist
         self.stamps_dir.mkdir(parents=True, exist_ok=True)
         self.originals_dir.mkdir(parents=True, exist_ok=True)
+        self.overlays_dir.mkdir(parents=True, exist_ok=True)
 
         # Load or create metadata
         if self.metadata_file.exists():
@@ -76,6 +78,7 @@ class StampManager(QObject):
 
             stamp_id = str(uuid.uuid4())
             edits = dict(DEFAULT_EDIT_PARAMS, **(edits or {}))
+            edits = self._persist_sketch_signatures(stamp_id, edits)
 
             # Normalize the source to RGBA PNG and keep it as the original
             with Image.open(path) as img:
@@ -127,7 +130,12 @@ class StampManager(QObject):
             stamp_path = Path(stamp_info['file'])
             if stamp_path.exists():
                 stamp_path.unlink()
-            
+
+            # Remove overlay files (placed signatures) and original
+            shutil.rmtree(self.overlays_dir / stamp_id, ignore_errors=True)
+            if 'original_file' in stamp_info:
+                Path(stamp_info['original_file']).unlink(missing_ok=True)
+
             # Update metadata
             self.categories[category].remove(stamp_id)
             del self.stamps[stamp_id]
@@ -208,6 +216,7 @@ class StampManager(QObject):
         if original is None:
             return False
         try:
+            params = self._persist_sketch_signatures(stamp_id, params)
             processed = apply_edits(original, params)
             if processed is None:
                 return False
@@ -220,11 +229,50 @@ class StampManager(QObject):
             info['original_height'] = height
             info['aspect_ratio'] = width / height
             self._save_metadata()
+            self._prune_overlay_orphans(stamp_id, info['edits'])
             self.stamp_updated.emit(stamp_id)
             return True
         except Exception as e:
             print(f"Error updating stamp edits: {e}")
             return False
+
+    def _persist_sketch_signatures(self, stamp_id: str, params: Dict) -> Dict:
+        """Write transient signature bytes to overlay files; rewrite entries."""
+        sketch = params.get('sketch')
+        if not sketch or not sketch.get('signatures'):
+            return params
+        params = dict(params)
+        sketch = {'strokes': list(sketch.get('strokes') or []),
+                  'signatures': []}
+        stamp_overlays = self.overlays_dir / stamp_id
+        for entry in params['sketch'].get('signatures') or []:
+            new_entry = {k: v for k, v in entry.items() if k != 'data'}
+            data = entry.get('data')
+            if data:
+                stamp_overlays.mkdir(parents=True, exist_ok=True)
+                sig_path = stamp_overlays / f"{uuid.uuid4()}.png"
+                sig_path.write_bytes(data)
+                new_entry['file'] = str(sig_path)
+            sketch['signatures'].append(new_entry)
+        params['sketch'] = sketch
+        return params
+
+    def _prune_overlay_orphans(self, stamp_id: str, params: Dict) -> None:
+        """Delete overlay files no longer referenced by the sketch."""
+        try:
+            stamp_overlays = self.overlays_dir / stamp_id
+            if not stamp_overlays.exists():
+                return
+            sketch = params.get('sketch') or {}
+            referenced = {entry.get('file')
+                          for entry in sketch.get('signatures') or []}
+            for f in stamp_overlays.iterdir():
+                if str(f) not in referenced:
+                    f.unlink()
+            if not any(stamp_overlays.iterdir()):
+                stamp_overlays.rmdir()
+        except Exception as e:
+            print(f"Error pruning overlay files: {e}")
 
     def add_category(self, category: str) -> bool:
         """Add a new category"""

@@ -73,3 +73,61 @@ def test_legacy_stamp_migrates_lazily(tmp_path):
     assert data is not None
     assert 'original_file' in mgr.stamps[stamp_id]
     assert Path(mgr.stamps[stamp_id]['original_file']).exists()
+
+
+from io import BytesIO
+
+
+def red_sig_png(size=(8, 8)):
+    img = Image.new('RGBA', size, (255, 0, 0, 255))
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+def sketch_with_data_sig():
+    return {'strokes': [], 'signatures': [
+        {'data': red_sig_png(), 'file': None, 'rect': [1, 1, 7, 7]}]}
+
+
+def test_import_persists_sketch_signature_bytes(tmp_path):
+    mgr = StampManager(str(tmp_path))
+    edits = dict(DEFAULT_EDIT_PARAMS, sketch=sketch_with_data_sig())
+    stamp_id = mgr.import_stamp(make_stamp_file(tmp_path), "test", edits=edits)
+    entry = mgr.stamps[stamp_id]['edits']['sketch']['signatures'][0]
+    assert 'data' not in entry
+    assert f"overlays" in entry['file'] and stamp_id in entry['file']
+    assert Path(entry['file']).exists()
+    with Image.open(mgr.stamps[stamp_id]['file']) as processed:
+        assert processed.getpixel((4, 4))[0] > 200   # red ink composited
+
+
+def test_update_persists_and_stores_sketch(tmp_path):
+    mgr = StampManager(str(tmp_path))
+    stamp_id = mgr.import_stamp(make_stamp_file(tmp_path), "test")
+    params = dict(DEFAULT_EDIT_PARAMS, sketch=sketch_with_data_sig())
+    assert mgr.update_stamp_edits(stamp_id, params)
+    entry = mgr.stamps[stamp_id]['edits']['sketch']['signatures'][0]
+    assert 'data' not in entry and Path(entry['file']).exists()
+
+
+def test_update_prunes_orphaned_overlays(tmp_path):
+    mgr = StampManager(str(tmp_path))
+    stamp_id = mgr.import_stamp(make_stamp_file(tmp_path), "test")
+    mgr.update_stamp_edits(stamp_id, dict(DEFAULT_EDIT_PARAMS,
+                                          sketch=sketch_with_data_sig()))
+    old_file = Path(mgr.stamps[stamp_id]['edits']['sketch']['signatures'][0]['file'])
+    assert old_file.exists()
+    assert mgr.update_stamp_edits(stamp_id, dict(DEFAULT_EDIT_PARAMS))  # sketch=None
+    assert not old_file.exists()
+
+
+def test_delete_stamp_removes_overlay_dir(tmp_path):
+    mgr = StampManager(str(tmp_path))
+    stamp_id = mgr.import_stamp(make_stamp_file(tmp_path), "test",
+                                edits=dict(DEFAULT_EDIT_PARAMS,
+                                           sketch=sketch_with_data_sig()))
+    overlay_dir = mgr.overlays_dir / stamp_id
+    assert overlay_dir.exists()
+    assert mgr.delete_stamp(stamp_id)
+    assert not overlay_dir.exists()
