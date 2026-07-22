@@ -13,7 +13,7 @@ def main():
 
     # Set application metadata
     app.setApplicationName("PySign")
-    app.setApplicationVersion("2.0.0")
+    app.setApplicationVersion("2.0.1")
     app.setOrganizationName("PySign")
     
     # Create and show main window

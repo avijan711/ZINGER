@@ -30,7 +30,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PySign-v2',
+    name='PySign-v2.01',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
