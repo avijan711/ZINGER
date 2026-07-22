@@ -75,9 +75,6 @@ def test_legacy_stamp_migrates_lazily(tmp_path):
     assert Path(mgr.stamps[stamp_id]['original_file']).exists()
 
 
-from io import BytesIO
-
-
 def red_sig_png(size=(8, 8)):
     img = Image.new('RGBA', size, (255, 0, 0, 255))
     buf = BytesIO()
@@ -131,3 +128,13 @@ def test_delete_stamp_removes_overlay_dir(tmp_path):
     assert overlay_dir.exists()
     assert mgr.delete_stamp(stamp_id)
     assert not overlay_dir.exists()
+
+
+def test_import_failure_cleans_up_overlay_dir(tmp_path):
+    mgr = StampManager(str(tmp_path))
+    bad_source = tmp_path / "bad.png"
+    bad_source.write_bytes(b"not an image")
+    edits = dict(DEFAULT_EDIT_PARAMS, sketch=sketch_with_data_sig())
+    assert mgr.import_stamp(str(bad_source), "bad", edits=edits) is None
+    leftover = [d for d in mgr.overlays_dir.iterdir()] if mgr.overlays_dir.exists() else []
+    assert leftover == []

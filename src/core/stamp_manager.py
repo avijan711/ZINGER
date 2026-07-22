@@ -72,6 +72,7 @@ class StampManager(QObject):
                      edits: Optional[Dict] = None) -> Optional[str]:
         """Import a stamp, keeping the untouched original alongside the
         processed image so edits can be re-applied later."""
+        stamp_id = None
         try:
             if category not in self.categories:
                 self.add_category(category)
@@ -90,6 +91,7 @@ class StampManager(QObject):
             processed = apply_edits(original_path.read_bytes(), edits)
             if processed is None:
                 original_path.unlink(missing_ok=True)
+                shutil.rmtree(self.overlays_dir / stamp_id, ignore_errors=True)
                 return None
 
             stamp_path = self.stamps_dir / f"{stamp_id}.png"
@@ -114,6 +116,8 @@ class StampManager(QObject):
             return stamp_id
         except Exception as e:
             print(f"Error importing stamp: {e}")
+            if stamp_id is not None:
+                shutil.rmtree(self.overlays_dir / stamp_id, ignore_errors=True)
             return None
 
     def delete_stamp(self, stamp_id: str) -> bool:
