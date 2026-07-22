@@ -60,6 +60,9 @@ class CropPreview(QWidget):
     def set_mode(self, mode: str) -> None:
         self.mode = mode
         self.selected_sig = None
+        self._active_stroke = None
+        self._sig_drag = None
+        self._drag_mode = None
         self.update()
 
     def set_sketch(self, sketch) -> None:
@@ -78,6 +81,10 @@ class CropPreview(QWidget):
     def invalidate_overlay(self) -> None:
         self._overlay_qimage = None
         self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._overlay_qimage = None
 
     def _sketch_overlay(self) -> QImage:
         """Rendered sketch at preview scale, cached until the sketch changes."""
