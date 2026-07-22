@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # Version
-APP_VERSION = "0.2"
+APP_VERSION = "2.0"
 
 # Application paths
 APP_DIR = Path(os.path.expanduser("~")) / ".pysign"
