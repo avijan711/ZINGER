@@ -3,7 +3,7 @@ import math
 from io import BytesIO
 from PIL import Image
 
-from core.image_processing import remove_background, auto_trim, apply_edits, DEFAULT_EDIT_PARAMS, bake_rotation_opacity, rotated_bounding_size, render_sketch, SIGNATURE_BG_TOLERANCE
+from core.image_processing import remove_background, auto_trim, apply_edits, DEFAULT_EDIT_PARAMS, bake_rotation_opacity, rotated_bounding_size, render_sketch, SIGNATURE_BG_TOLERANCE, transform_sketch_90
 
 
 def make_image(pixels, size):
@@ -279,3 +279,46 @@ def test_apply_edits_sketch_coords_are_precrop():
     result = Image.open(BytesIO(out))
     assert result.size == (15, 20)
     assert result.getpixel((5, 10))[0] > 150     # red ink at translated x
+
+
+def test_transform_sketch_none_passthrough():
+    assert transform_sketch_90(None, (10, 20), True) is None
+
+
+def test_transform_sketch_cw_point_mapping():
+    # (x, y) -> (H - y, x) with pre-rotation size (W=30, H=20)
+    sketch = {'strokes': [{'color': '#000000', 'width': 3,
+                           'points': [[0, 0], [30, 20]]}], 'signatures': []}
+    out = transform_sketch_90(sketch, (30, 20), clockwise=True)
+    assert out['strokes'][0]['points'] == [[20, 0], [0, 30]]
+    assert out['strokes'][0]['width'] == 3
+
+
+def test_transform_sketch_ccw_point_mapping():
+    # (x, y) -> (y, W - x) with pre-rotation size (W=30, H=20)
+    sketch = {'strokes': [{'color': '#000000', 'width': 3,
+                           'points': [[0, 0], [30, 20]]}], 'signatures': []}
+    out = transform_sketch_90(sketch, (30, 20), clockwise=False)
+    assert out['strokes'][0]['points'] == [[0, 30], [20, 0]]
+
+
+def test_transform_sketch_rect_normalized():
+    sketch = {'strokes': [], 'signatures': [
+        {'file': 'x.png', 'rect': [2, 4, 10, 8]}]}
+    out = transform_sketch_90(sketch, (30, 20), clockwise=True)
+    # corners (2,4)->(16,2) and (10,8)->(12,10); normalized to [12,2,16,10]
+    assert out['signatures'][0]['rect'] == [12, 2, 16, 10]
+    assert out['signatures'][0]['file'] == 'x.png'
+
+
+def test_transform_sketch_four_cw_is_identity():
+    sketch = {'strokes': [{'color': '#123456', 'width': 5,
+                           'points': [[3, 7], [11, 13]]}],
+              'signatures': [{'file': 'x.png', 'rect': [1, 2, 5, 6]}]}
+    size = (30, 20)
+    out = sketch
+    for _ in range(4):
+        out = transform_sketch_90(out, size, clockwise=True)
+        size = (size[1], size[0])
+    assert out['strokes'][0]['points'] == [[3, 7], [11, 13]]
+    assert out['signatures'][0]['rect'] == [1, 2, 5, 6]

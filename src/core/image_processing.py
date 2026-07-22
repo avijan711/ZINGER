@@ -188,3 +188,33 @@ def rotated_bounding_size(width: float, height: float,
     theta = math.radians(rotation % 360)
     c, s = abs(math.cos(theta)), abs(math.sin(theta))
     return width * c + height * s, width * s + height * c
+
+
+def transform_sketch_90(sketch, pre_rotation_size, clockwise):
+    """Map sketch coordinates through a 90-degree rotation.
+
+    CW: (x, y) -> (H - y, x); CCW: (x, y) -> (y, W - x),
+    where (W, H) is the image size BEFORE this rotation step.
+    """
+    if not sketch:
+        return sketch
+    w, h = pre_rotation_size
+
+    def pt(x, y):
+        return [h - y, x] if clockwise else [y, w - x]
+
+    out = {'strokes': [], 'signatures': []}
+    for stroke in sketch.get('strokes') or []:
+        out['strokes'].append({
+            'color': stroke.get('color', '#000000'),
+            'width': stroke.get('width', 4),
+            'points': [pt(x, y) for x, y in (stroke.get('points') or [])],
+        })
+    for entry in sketch.get('signatures') or []:
+        x0, y0, x1, y1 = entry['rect']
+        c1, c2 = pt(x0, y0), pt(x1, y1)
+        new_entry = dict(entry)
+        new_entry['rect'] = [min(c1[0], c2[0]), min(c1[1], c2[1]),
+                             max(c1[0], c2[0]), max(c1[1], c2[1])]
+        out['signatures'].append(new_entry)
+    return out
