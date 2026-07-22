@@ -1,10 +1,10 @@
-"""Preview widget for the stamp editor: checkerboard, crop rect, (draw mode added later)"""
+"""Preview widget for the stamp editor: checkerboard preview with crop and draw modes."""
 
 from PIL import Image
 
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QPainter, QImage, QPen, QColor, QPainterPath
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
+from PyQt6.QtCore import Qt, QRectF, QPointF
 from core.image_processing import render_sketch
 
 HANDLE_RADIUS = 6      # px, half-size of crop handles in widget space
@@ -29,8 +29,6 @@ class CropPreview(QWidget):
 
     self.crop is (x0, y0, x1, y1) in image coordinates, or None = full image.
     """
-
-    sketchChanged = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -69,6 +67,7 @@ class CropPreview(QWidget):
         sketch = sketch or {}
         self.sketch = {'strokes': list(sketch.get('strokes') or []),
                        'signatures': [dict(e) for e in sketch.get('signatures') or []]}
+        self.selected_sig = None
         self.invalidate_overlay()
 
     def sketch_or_none(self):
@@ -128,7 +127,6 @@ class CropPreview(QWidget):
             del self.sketch['signatures'][self.selected_sig]
             self.selected_sig = None
             self.invalidate_overlay()
-            self.sketchChanged.emit()
         else:
             super().keyPressEvent(event)
 
@@ -321,6 +319,8 @@ class CropPreview(QWidget):
             return
         if self._active_stroke is not None:
             if len(self._active_stroke) >= 1:
+                if len(self._active_stroke) == 1:
+                    self._active_stroke = self._active_stroke * 2
                 self.sketch['strokes'].append({
                     'color': self.pen_color,
                     'width': self.pen_width,
@@ -328,10 +328,8 @@ class CropPreview(QWidget):
                 })
             self._active_stroke = None
             self.invalidate_overlay()
-            self.sketchChanged.emit()
         if self._sig_drag is not None:
             self._sig_drag = None
-            self.sketchChanged.emit()
 
     def _crop_mouse_press(self, event):
         pos = event.position()

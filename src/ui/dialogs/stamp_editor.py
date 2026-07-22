@@ -211,7 +211,6 @@ class StampEditorDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.preview.set_sketch(None)
-            self.preview.selected_sig = None
 
     def _insert_signature(self) -> None:
         picker = SignaturePickerDialog(self)

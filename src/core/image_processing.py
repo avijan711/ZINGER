@@ -125,7 +125,7 @@ def render_sketch(size, sketch, crop_offset=(0, 0), supersample=2):
 
 
 def apply_edits(original_bytes: bytes, params: dict) -> Optional[bytes]:
-    """Apply rotation -> crop -> background removal; return PNG bytes.
+    """Apply rotation -> crop -> background removal -> sketch composite; return PNG bytes.
 
     Returns None for invalid input or an empty result.
     """

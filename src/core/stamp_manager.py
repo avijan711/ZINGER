@@ -268,10 +268,11 @@ class StampManager(QObject):
             if not stamp_overlays.exists():
                 return
             sketch = params.get('sketch') or {}
-            referenced = {entry.get('file')
-                          for entry in sketch.get('signatures') or []}
+            referenced = {Path(entry['file']).name
+                          for entry in sketch.get('signatures') or []
+                          if entry.get('file')}
             for f in stamp_overlays.iterdir():
-                if str(f) not in referenced:
+                if f.name not in referenced:
                     f.unlink()
             if not any(stamp_overlays.iterdir()):
                 stamp_overlays.rmdir()
