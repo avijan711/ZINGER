@@ -3,7 +3,7 @@ import math
 from io import BytesIO
 from PIL import Image
 
-from core.image_processing import remove_background, auto_trim, apply_edits, DEFAULT_EDIT_PARAMS, bake_rotation_opacity, rotated_bounding_size
+from core.image_processing import remove_background, auto_trim, apply_edits, DEFAULT_EDIT_PARAMS, bake_rotation_opacity, rotated_bounding_size, render_sketch, SIGNATURE_BG_TOLERANCE
 
 
 def make_image(pixels, size):
@@ -179,3 +179,103 @@ def test_bake_rotation_is_clockwise():
     assert result.size == (1, 2)
     assert result.getpixel((0, 0)) == (255, 0, 0, 255)
     assert result.getpixel((0, 1)) == (0, 0, 255, 255)
+
+
+def red_sig_png(size=(8, 8)):
+    """Solid red RGBA signature image (no white background)."""
+    return png_bytes(Image.new('RGBA', size, (255, 0, 0, 255)))
+
+
+def white_bg_sig_png(size=(10, 10)):
+    """White background with a black center dot, like a signature-pad export."""
+    img = Image.new('RGBA', size, (255, 255, 255, 255))
+    for x in range(4, 6):
+        for y in range(4, 6):
+            img.putpixel((x, y), (0, 0, 0, 255))
+    return png_bytes(img)
+
+
+def test_render_sketch_empty_is_transparent():
+    for sketch in (None, {}, {'strokes': [], 'signatures': []}):
+        overlay = render_sketch((10, 10), sketch)
+        assert overlay.size == (10, 10)
+        assert overlay.getchannel('A').getbbox() is None
+
+
+def test_render_sketch_stroke_puts_ink_on_path():
+    sketch = {'strokes': [{'color': '#000000', 'width': 4,
+                           'points': [[5, 10], [15, 10]]}], 'signatures': []}
+    overlay = render_sketch((20, 20), sketch)
+    assert overlay.getpixel((10, 10))[3] > 200   # ink on the path
+    assert overlay.getpixel((0, 0))[3] == 0      # corner untouched
+
+
+def test_render_sketch_respects_crop_offset():
+    sketch = {'strokes': [{'color': '#000000', 'width': 4,
+                           'points': [[5, 10], [15, 10]]}], 'signatures': []}
+    overlay = render_sketch((20, 20), sketch, crop_offset=(5, 0))
+    assert overlay.getpixel((5, 10))[3] > 200    # shifted left by 5
+    assert overlay.getpixel((19, 10))[3] == 0
+
+
+def test_render_sketch_single_point_renders_dot():
+    sketch = {'strokes': [{'color': '#ff0000', 'width': 6,
+                           'points': [[10, 10]]}], 'signatures': []}
+    overlay = render_sketch((20, 20), sketch)
+    px = overlay.getpixel((10, 10))
+    assert px[3] > 200 and px[0] > 200
+
+
+def test_render_sketch_places_signature_from_data():
+    sketch = {'strokes': [], 'signatures': [
+        {'data': red_sig_png(), 'file': None, 'rect': [2, 2, 8, 8]}]}
+    overlay = render_sketch((10, 10), sketch)
+    assert overlay.getpixel((5, 5))[0] > 200     # red ink inside rect
+    assert overlay.getpixel((0, 0))[3] == 0      # outside rect empty
+
+
+def test_render_sketch_signature_white_bg_removed():
+    sketch = {'strokes': [], 'signatures': [
+        {'data': white_bg_sig_png(), 'file': None, 'rect': [0, 0, 10, 10]}]}
+    overlay = render_sketch((10, 10), sketch)
+    assert overlay.getpixel((0, 0))[3] == 0      # white corner transparent
+    assert overlay.getpixel((4, 4))[3] > 0       # black dot survives
+
+
+def test_render_sketch_missing_file_skipped():
+    sketch = {'strokes': [], 'signatures': [
+        {'data': None, 'file': '/nonexistent/sig.png', 'rect': [0, 0, 5, 5]}]}
+    overlay = render_sketch((10, 10), sketch)
+    assert overlay.getchannel('A').getbbox() is None
+
+
+def test_render_sketch_out_of_bounds_signature_clipped():
+    sketch = {'strokes': [], 'signatures': [
+        {'data': red_sig_png(), 'file': None, 'rect': [-4, -4, 6, 6]}]}
+    overlay = render_sketch((10, 10), sketch)     # must not raise
+    assert overlay.getpixel((2, 2))[3] > 0
+
+
+def test_apply_edits_sketch_survives_max_bg_removal():
+    # All-white stamp: bg removal at 100 erases everything; stroke ink must remain
+    src = png_bytes(Image.new('RGBA', (20, 20), (255, 255, 255, 255)))
+    params = {'rotation': 0, 'crop': None, 'bg_tolerance': 100,
+              'sketch': {'strokes': [{'color': '#000000', 'width': 4,
+                                      'points': [[5, 10], [15, 10]]}],
+                         'signatures': []}}
+    out = apply_edits(src, params)
+    result = Image.open(BytesIO(out))
+    assert result.getpixel((10, 10))[3] > 200
+
+
+def test_apply_edits_sketch_coords_are_precrop():
+    # Crop [5,0,20,20]; stroke at x=10 pre-crop must land at x=5 post-crop
+    src = png_bytes(Image.new('RGBA', (20, 20), (0, 0, 255, 255)))
+    params = {'rotation': 0, 'crop': [5, 0, 20, 20], 'bg_tolerance': 0,
+              'sketch': {'strokes': [{'color': '#ff0000', 'width': 2,
+                                      'points': [[10, 10], [12, 10]]}],
+                         'signatures': []}}
+    out = apply_edits(src, params)
+    result = Image.open(BytesIO(out))
+    assert result.size == (15, 20)
+    assert result.getpixel((5, 10))[0] > 150     # red ink at translated x

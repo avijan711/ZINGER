@@ -5,13 +5,15 @@ No Qt imports — this module must stay headless and unit-testable.
 import math
 from io import BytesIO
 from typing import Optional, Tuple
-from PIL import Image, ImageChops, ImageMath
+from PIL import Image, ImageChops, ImageMath, ImageDraw
 
 # Slider tolerance 0-100 maps linearly to a max Euclidean RGB distance
 # from pure white. 100 -> distance 220 (aggressive removal).
 _TOLERANCE_SCALE = 2.2
 
-DEFAULT_EDIT_PARAMS = {'rotation': 0, 'crop': None, 'bg_tolerance': 0}
+DEFAULT_EDIT_PARAMS = {'rotation': 0, 'crop': None, 'bg_tolerance': 0, 'sketch': None}
+
+SIGNATURE_BG_TOLERANCE = 12
 
 
 def remove_background(img: Image.Image, tolerance: int) -> Image.Image:
@@ -47,6 +49,81 @@ def auto_trim(img: Image.Image, tolerance: int) -> Optional[Tuple[int, int, int,
     return rgba.getchannel('A').getbbox()
 
 
+def _load_signature_image(entry: dict) -> Optional[Image.Image]:
+    """Load a placed signature from its transient bytes or stored file."""
+    try:
+        data = entry.get('data')
+        if data:
+            return Image.open(BytesIO(data)).convert('RGBA')
+        file = entry.get('file')
+        if file:
+            with Image.open(file) as img:
+                return img.convert('RGBA')
+    except Exception:
+        pass
+    return None
+
+
+def _paste_clipped(canvas: Image.Image, img: Image.Image,
+                   dest_x: int, dest_y: int) -> None:
+    """Alpha-composite img onto canvas at (dest_x, dest_y), clipping to bounds."""
+    x0, y0 = max(0, dest_x), max(0, dest_y)
+    x1 = min(canvas.width, dest_x + img.width)
+    y1 = min(canvas.height, dest_y + img.height)
+    if x1 <= x0 or y1 <= y0:
+        return
+    region = img.crop((x0 - dest_x, y0 - dest_y, x1 - dest_x, y1 - dest_y))
+    canvas.alpha_composite(region, (x0, y0))
+
+
+def render_sketch(size, sketch, crop_offset=(0, 0), supersample=2):
+    """Render a sketch overlay (strokes + placed signatures) as an RGBA image.
+
+    size: (width, height) of the target canvas.
+    sketch coordinates are in the rotated pre-crop space; crop_offset is the
+    crop origin used to translate them into the canvas space.
+    """
+    width, height = int(size[0]), int(size[1])
+    overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    if not sketch:
+        return overlay
+    ox, oy = crop_offset
+    ss = max(1, int(supersample))
+
+    strokes = sketch.get('strokes') or []
+    if strokes:
+        layer = Image.new('RGBA', (width * ss, height * ss), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
+        for stroke in strokes:
+            color = stroke.get('color', '#000000')
+            w = max(1, int(stroke.get('width', 4)) * ss)
+            pts = [((x - ox) * ss, (y - oy) * ss)
+                   for x, y in (stroke.get('points') or [])]
+            if len(pts) == 1:
+                pts = pts * 2
+            if len(pts) < 2:
+                continue
+            draw.line(pts, fill=color, width=w, joint='curve')
+            r = w / 2
+            for px, py in (pts[0], pts[-1]):
+                draw.ellipse([px - r, py - r, px + r, py + r], fill=color)
+        overlay = layer.resize((width, height), Image.Resampling.LANCZOS)
+
+    for entry in sketch.get('signatures') or []:
+        sig = _load_signature_image(entry)
+        if sig is None:
+            continue
+        x0, y0, x1, y1 = [int(v) for v in entry['rect']]
+        x0, y0, x1, y1 = x0 - int(ox), y0 - int(oy), x1 - int(ox), y1 - int(oy)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        sig = sig.resize((x1 - x0, y1 - y0), Image.Resampling.LANCZOS)
+        sig = remove_background(sig, SIGNATURE_BG_TOLERANCE)
+        _paste_clipped(overlay, sig, x0, y0)
+
+    return overlay
+
+
 def apply_edits(original_bytes: bytes, params: dict) -> Optional[bytes]:
     """Apply rotation -> crop -> background removal; return PNG bytes.
 
@@ -68,6 +145,12 @@ def apply_edits(original_bytes: bytes, params: dict) -> Optional[bytes]:
             img = img.crop((x0, y0, x1, y1))
 
         img = remove_background(img, int(params.get('bg_tolerance', 0)))
+
+        sketch = params.get('sketch')
+        if sketch and (sketch.get('strokes') or sketch.get('signatures')):
+            offset = (int(crop[0]), int(crop[1])) if crop else (0, 0)
+            overlay = render_sketch((img.width, img.height), sketch, offset)
+            img = Image.alpha_composite(img, overlay)
 
         if img.width == 0 or img.height == 0:
             return None
