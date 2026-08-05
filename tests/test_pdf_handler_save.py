@@ -92,3 +92,71 @@ def test_save_rotation_expands_rect_within_page(tmp_path):
     assert abs((bbox[2] - bbox[0]) - 50) < 1.0   # width ~50
     assert abs((bbox[3] - bbox[1]) - 100) < 1.0  # height ~100
     assert abs((bbox[0] + bbox[2]) / 2 - 100) < 1.0  # center x preserved
+
+
+import io
+
+import pytest
+
+
+@pytest.fixture
+def png_bytes():
+    buf = io.BytesIO()
+    # Create a 4x8 (non-square) red image so rotation produces visually different content
+    Image.new("RGBA", (4, 8), (255, 0, 0, 255)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@pytest.fixture
+def handler_with_doc(tmp_path):
+    pdf_path = str(tmp_path / "blank.pdf")
+    doc = fitz.open()
+    doc.new_page(width=595, height=842)
+    doc.save(pdf_path)
+    doc.close()
+
+    handler = PDFHandler()
+    assert handler.open_document(pdf_path)
+    yield handler
+    handler.close_document()
+
+
+class TestGetAnnotationPlacements:
+    def test_plain_annotation_passes_through(self, handler_with_doc, png_bytes):
+        handler = handler_with_doc
+        handler.add_annotation(Annotation(
+            type='stamp', rect=(10.0, 20.0, 110.0, 70.0),
+            content={'image_data': png_bytes}, page=0))
+
+        placements = handler.get_annotation_placements()
+
+        assert len(placements) == 1
+        page, rect, data = placements[0]
+        assert page == 0
+        assert rect == (10.0, 20.0, 110.0, 70.0)
+        assert data == png_bytes  # untouched: no rotation/opacity
+
+    def test_rotated_annotation_is_baked_and_rect_expanded(
+            self, handler_with_doc, png_bytes):
+        handler = handler_with_doc
+        handler.add_annotation(Annotation(
+            type='stamp', rect=(100.0, 100.0, 200.0, 150.0),
+            content={'image_data': png_bytes, 'rotation': 90.0}, page=0))
+
+        placements = handler.get_annotation_placements()
+
+        page, rect, data = placements[0]
+        assert data != png_bytes  # baked
+        # 90°: width/height swap around the same center (150, 125)
+        x0, y0, x1, y1 = rect
+        assert (x0 + x1) / 2 == pytest.approx(150.0)
+        assert (y0 + y1) / 2 == pytest.approx(125.0)
+        assert x1 - x0 == pytest.approx(50.0)
+        assert y1 - y0 == pytest.approx(100.0)
+
+    def test_annotation_without_image_data_is_skipped(self, handler_with_doc):
+        handler = handler_with_doc
+        handler.add_annotation(Annotation(
+            type='stamp', rect=(0, 0, 10, 10), content={}, page=0))
+
+        assert handler.get_annotation_placements() == []

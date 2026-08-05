@@ -170,15 +170,56 @@ class PDFHandler(QObject):
         """Get the path where the signed document would be saved"""
         if not self.document:
             return None
-            
+
         original_path = self.document.name
         base, ext = os.path.splitext(original_path)
-        
+
         # Ensure we're using .pdf extension
         if not ext.lower() == '.pdf':
             ext = '.pdf'
-            
+
         return f"{base}_signed{ext}"
+
+    def get_annotation_placements(self) -> List[Tuple[int, Tuple[float, float, float, float], bytes]]:
+        """Final (page, rect, png_bytes) per annotation, as saved to the PDF.
+
+        Rotation/opacity are baked into the image bytes and the rect is
+        expanded to the rotated bounding box — the docx write-back reuses
+        this so both outputs are pixel-identical.
+        """
+        placements = []
+        for annotation in self.annotations:
+            image_data = (annotation.content.get('image_data')
+                          or annotation.content.get('signature_data'))
+            if not image_data:
+                logger.warning(
+                    "Skipping %s annotation on page %d: no image data",
+                    annotation.type, annotation.page)
+                continue
+
+            rect = fitz.Rect(*annotation.rect)
+            rotation = float(annotation.content.get('rotation', 0.0))
+            opacity = float(annotation.content.get('opacity', 1.0))
+
+            if rotation % 360 != 0 or opacity < 1.0:
+                image_data = bake_rotation_opacity(image_data, rotation, opacity)
+                if image_data is None:
+                    logger.warning(
+                        "Skipping %s annotation on page %d: "
+                        "bake_rotation_opacity failed", annotation.type,
+                        annotation.page)
+                    continue
+                if rotation % 360 != 0:
+                    w, h = rotated_bounding_size(rect.width, rect.height, rotation)
+                    cx = (rect.x0 + rect.x1) / 2
+                    cy = (rect.y0 + rect.y1) / 2
+                    rect = fitz.Rect(cx - w / 2, cy - h / 2,
+                                     cx + w / 2, cy + h / 2)
+
+            placements.append(
+                (annotation.page, (rect.x0, rect.y0, rect.x1, rect.y1),
+                 image_data))
+        return placements
 
     def save_document(self, path: Optional[str] = None) -> bool:
         """Save the document with all annotations"""
@@ -197,36 +238,9 @@ class PDFHandler(QObject):
             doc_copy.insert_pdf(self.document)
 
             # Apply all annotations (stamps and signatures are both images)
-            for annotation in self.annotations:
-                page = doc_copy[annotation.page]
-                image_data = (annotation.content.get('image_data')
-                              or annotation.content.get('signature_data'))
-                if not image_data:
-                    logger.warning(
-                        "Skipping %s annotation on page %d during save: "
-                        "no image data", annotation.type, annotation.page)
-                    continue
-
-                rect = fitz.Rect(*annotation.rect)
-                rotation = float(annotation.content.get('rotation', 0.0))
-                opacity = float(annotation.content.get('opacity', 1.0))
-
-                if rotation % 360 != 0 or opacity < 1.0:
-                    image_data = bake_rotation_opacity(image_data, rotation, opacity)
-                    if image_data is None:
-                        logger.warning(
-                            "Skipping %s annotation on page %d during save: "
-                            "bake_rotation_opacity failed", annotation.type,
-                            annotation.page)
-                        continue
-                    if rotation % 360 != 0:
-                        w, h = rotated_bounding_size(rect.width, rect.height, rotation)
-                        cx = (rect.x0 + rect.x1) / 2
-                        cy = (rect.y0 + rect.y1) / 2
-                        rect = fitz.Rect(cx - w / 2, cy - h / 2,
-                                         cx + w / 2, cy + h / 2)
-
-                page.insert_image(rect, stream=image_data)
+            for page_num, rect, image_data in self.get_annotation_placements():
+                doc_copy[page_num].insert_image(fitz.Rect(*rect),
+                                                stream=image_data)
 
             # Ensure path has .pdf extension
             base, ext = os.path.splitext(path)
