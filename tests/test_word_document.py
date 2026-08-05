@@ -168,3 +168,46 @@ def test_write_signatures_places_shapes(fake_word, tmp_path):
     # temp PNGs must be cleaned up
     for added in doc.Shapes.added:
         assert not os.path.exists(added["file"])
+
+
+# --- Word instance isolation ------------------------------------------------
+
+def _install_fake_win32com(monkeypatch):
+    """Make `import win32com.client` work on Linux, recording which
+    constructor the code uses."""
+    import sys
+    import types
+
+    used = []
+
+    class FakeApp:
+        pass
+
+    fake_client = types.ModuleType('win32com.client')
+    fake_client.Dispatch = lambda progid: (
+        used.append(('Dispatch', progid)) or FakeApp())
+    fake_client.DispatchEx = lambda progid: (
+        used.append(('DispatchEx', progid)) or FakeApp())
+    fake_win32com = types.ModuleType('win32com')
+    fake_win32com.client = fake_client
+
+    monkeypatch.setitem(sys.modules, 'win32com', fake_win32com)
+    monkeypatch.setitem(sys.modules, 'win32com.client', fake_client)
+    return used
+
+
+def test_create_word_app_uses_private_instance(monkeypatch):
+    """Must NOT attach to a Word the user already has open.
+
+    Dispatch() reuses a running instance: an interactive Word rejects
+    programmatic calls with RPC_E_CALL_REJECTED, and our Quit(SaveChanges=0)
+    would close the user's session and discard their unsaved changes.
+    DispatchEx() always creates a private instance.
+    """
+    used = _install_fake_win32com(monkeypatch)
+
+    app = word_document._create_word_app()
+
+    assert used == [('DispatchEx', 'Word.Application')]
+    assert app.Visible is False
+    assert app.DisplayAlerts == 0

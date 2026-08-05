@@ -39,9 +39,16 @@ def is_word_file(path: str) -> bool:
 
 
 def _create_word_app():
-    """Create a hidden Word.Application instance (raises on failure)."""
+    """Create a private hidden Word.Application instance (raises on failure).
+
+    DispatchEx, not Dispatch: Dispatch binds to a Word the user already has
+    open, which rejects programmatic calls while they are working in it
+    (RPC_E_CALL_REJECTED, surfacing as a bare AttributeError under late
+    binding) — and our Quit(SaveChanges=0) would then close their session
+    and discard unsaved changes.
+    """
     import win32com.client
-    app = win32com.client.Dispatch('Word.Application')
+    app = win32com.client.DispatchEx('Word.Application')
     app.Visible = False
     app.DisplayAlerts = 0
     return app
