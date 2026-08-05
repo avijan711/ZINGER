@@ -12,6 +12,7 @@ SIGNATURES_DIR = APP_DIR / "signatures"
 # File patterns
 SUPPORTED_IMAGE_FORMATS = "*.png *.jpg *.jpeg"
 SUPPORTED_PDF_FORMATS = "*.pdf"
+SUPPORTED_DOCUMENT_FORMATS = "*.pdf *.docx *.doc"
 
 # UI Constants
 WINDOW_MIN_WIDTH = 1024

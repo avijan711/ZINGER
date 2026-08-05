@@ -45,13 +45,15 @@ def load_icon(name: str) -> QIcon:
 
 from core.pdf_handler import PDFHandler
 from core.share_manager import ShareManager
+from core import word_document
 from .pdf_viewer import PDFView
 from .stamp_gallery import StampGallery
 from .dialogs.signature_pad import SignaturePadDialog
 from .pdf_drag_source import PDFDragSource
 from config.constants import (
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, TOOLBAR_ICON_SIZE,
-    STAMPS_DIR, SIGNATURES_DIR, SUPPORTED_PDF_FORMATS
+    STAMPS_DIR, SIGNATURES_DIR, SUPPORTED_PDF_FORMATS,
+    SUPPORTED_DOCUMENT_FORMATS
 )
 
 class MainWindow(QMainWindow):
@@ -233,8 +235,11 @@ class MainWindow(QMainWindow):
         
         if file_path:
             if self.pdf_handler.save_document(file_path):
-                # Share via WhatsApp
-                if not self.share_manager.share_via_whatsapp(file_path):
+                pdf_path = (self.pdf_handler.last_saved_paths[0]
+                            if self.pdf_handler.last_saved_paths
+                            else file_path)
+                # Share via WhatsApp (single file: the signed PDF)
+                if not self.share_manager.share_via_whatsapp(pdf_path):
                     QMessageBox.critical(
                         self,
                         "Error",
@@ -246,7 +251,7 @@ class MainWindow(QMainWindow):
                     "Error",
                     "Failed to save the document for sharing."
                 )
-        
+
     def share_via_email(self):
         """Share the current document via email"""
         if not self.pdf_handler.document:
@@ -267,9 +272,18 @@ class MainWindow(QMainWindow):
         
         if file_path:
             if self.pdf_handler.save_document(file_path):
+                if self.pdf_handler.word_writeback_failed:
+                    QMessageBox.warning(
+                        self,
+                        "Warning",
+                        "The signed PDF was saved, but the signed Word "
+                        "copy could not be created."
+                    )
+                attachments = (self.pdf_handler.last_saved_paths
+                               or [file_path])
                 # Share via email
                 if not self.share_manager.share_via_email(
-                    file_path,
+                    attachments,
                     "",  # No default subject
                     ""   # No default body
                 ):
@@ -291,20 +305,36 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def open_document(self):
-        """Open a PDF document"""
+        """Open a PDF or Word document"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open PDF Document",
+            "Open Document",
             "",
-            f"PDF Files ({SUPPORTED_PDF_FORMATS})"
+            f"Documents ({SUPPORTED_DOCUMENT_FORMATS})"
         )
-        if file_path:
-            if not self.pdf_handler.open_document(file_path):
-                QMessageBox.critical(
-                    self,
-                    "Error",
-                    "Failed to open the PDF document."
-                )
+        if not file_path:
+            return
+
+        is_word = word_document.is_word_file(file_path)
+        if is_word:
+            self.status_bar.showMessage("Converting Word document...")
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            opened = self.pdf_handler.open_document(file_path)
+        finally:
+            if is_word:
+                QApplication.restoreOverrideCursor()
+
+        if not opened:
+            if self.pdf_handler.last_open_error == 'word_missing':
+                message = ("Microsoft Word is required to open Word "
+                           "documents. Please install Microsoft Word "
+                           "and try again.")
+            elif is_word:
+                message = "Failed to convert the Word document."
+            else:
+                message = "Failed to open the PDF document."
+            QMessageBox.critical(self, "Error", message)
 
     def save_document(self):
         """Save the PDF document"""
@@ -352,8 +382,18 @@ class MainWindow(QMainWindow):
             print(f"Attempting to save document to: {signed_path}")
             if self.pdf_handler.save_document():
                 print("Document saved successfully")
-                self.status_bar.showMessage(f"Document signed and saved to: {signed_path}")
-                # Update drag source with the new file
+                saved_paths = ", ".join(
+                    self.pdf_handler.last_saved_paths) or signed_path
+                self.status_bar.showMessage(
+                    f"Document signed and saved to: {saved_paths}")
+                if self.pdf_handler.word_writeback_failed:
+                    QMessageBox.warning(
+                        self,
+                        "Warning",
+                        "The signed PDF was saved, but the signed Word "
+                        "copy could not be created."
+                    )
+                # Update drag source with the new file (always the PDF)
                 print("Updating drag source with new file")
                 self.drag_source.setPDFPath(signed_path)
             else:
