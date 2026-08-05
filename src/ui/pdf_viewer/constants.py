@@ -13,3 +13,7 @@ DEFAULT_STAMP_WIDTH = 100
 
 # Default color
 DEFAULT_COLOR = "#000000"
+
+# Rotate handle (Phase 2 on-PDF rotation)
+ROTATE_HANDLE_OFFSET = 20
+ROTATE_HANDLE_RADIUS = 6

@@ -1,8 +1,7 @@
-import win32com.client
 import os
 import subprocess
 import requests
-from typing import Optional
+from typing import List, Optional, Union
 from PyQt6.QtWidgets import QMessageBox
 from urllib.parse import quote
 
@@ -16,35 +15,42 @@ class ShareManager:
         """Get or create Outlook application instance"""
         if self._outlook is None:
             try:
+                import win32com.client
                 self._outlook = win32com.client.Dispatch('Outlook.Application')
             except Exception as e:
                 print(f"Error connecting to Outlook: {e}")
                 return None
         return self._outlook
     
-    def share_via_email(self, file_path: str, subject: str = "", body: str = "") -> bool:
-        """Share file via Outlook email"""
+    def share_via_email(self, file_paths: Union[str, List[str]],
+                        subject: str = "", body: str = "") -> bool:
+        """Share one or more files as attachments in a single Outlook email"""
         try:
+            if isinstance(file_paths, str):
+                file_paths = [file_paths]
+
             outlook = self._get_outlook()
             if not outlook:
                 print("Outlook not available")
                 return False
-            
-            if not os.path.exists(file_path):
-                print(f"File not found: {file_path}")
-                return False
-            
+
+            for file_path in file_paths:
+                if not os.path.exists(file_path):
+                    print(f"File not found: {file_path}")
+                    return False
+
             try:
                 # Create new email
                 mail = outlook.CreateItem(0)  # 0 = olMailItem
-                
+
                 # Set email properties
                 mail.Subject = subject or ""
                 mail.Body = body or ""
-                
-                # Add attachment
-                mail.Attachments.Add(os.path.abspath(file_path))
-                
+
+                # Add attachments
+                for file_path in file_paths:
+                    mail.Attachments.Add(os.path.abspath(file_path))
+
                 # Display the email
                 mail.Display(True)
             except Exception as e:
@@ -58,9 +64,9 @@ class ShareManager:
                     )
                 else:
                     raise  # Re-raise other exceptions
-            
+
             return True
-            
+
         except Exception as e:
             print(f"Error creating email: {e}")
             return False

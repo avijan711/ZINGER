@@ -5,3 +5,4 @@ python-dotenv>=0.21.0
 pywin32>=305; platform_system == "Windows"
 requests>=2.28.1  # For file upload functionality
 pyinstaller>=5.13.0  # For creating executable
+pytest>=7.0  # Dev: unit tests for image processing

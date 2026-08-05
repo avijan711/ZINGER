@@ -11,6 +11,9 @@ PySign is a powerful PDF signing application that allows users to digitally stam
   - Zoom and fit-to-window options
   - Display current page number and total pages
 
+- **Microsoft Word Document Support**
+  - Sign Microsoft Word documents (.docx/.doc) — produces both a signed PDF and a signed Word copy
+
 - **Digital Stamp Management**
   - Gallery view for available stamps
   - Import new stamps (PNG/JPG with transparency)
@@ -43,6 +46,7 @@ PySign is a powerful PDF signing application that allows users to digitally stam
 - PyQt6
 - PyMuPDF (fitz)
 - Pillow
+- Microsoft Word (required only for opening Word documents)
 - Additional dependencies listed in requirements.txt
 
 ## Installation

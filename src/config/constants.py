@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # Version
-APP_VERSION = "0.2"
+APP_VERSION = "2.0.1"
 
 # Application paths
 APP_DIR = Path(os.path.expanduser("~")) / ".pysign"
@@ -12,6 +12,7 @@ SIGNATURES_DIR = APP_DIR / "signatures"
 # File patterns
 SUPPORTED_IMAGE_FORMATS = "*.png *.jpg *.jpeg"
 SUPPORTED_PDF_FORMATS = "*.pdf"
+SUPPORTED_DOCUMENT_FORMATS = "*.pdf *.docx *.doc"
 
 # UI Constants
 WINDOW_MIN_WIDTH = 1024
