@@ -352,7 +352,15 @@ class MainWindow(QMainWindow):
             f"PDF Files ({SUPPORTED_PDF_FORMATS})"
         )
         if file_path:
-            if not self.pdf_handler.save_document(file_path):
+            if self.pdf_handler.save_document(file_path):
+                if self.pdf_handler.word_writeback_failed:
+                    QMessageBox.warning(
+                        self,
+                        "Warning",
+                        "The signed PDF was saved, but the signed Word "
+                        "copy could not be created."
+                    )
+            else:
                 QMessageBox.critical(
                     self,
                     "Error",

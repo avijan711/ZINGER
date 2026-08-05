@@ -62,6 +62,13 @@ class PDFHandler(QObject):
                         'word_missing'
                         if not word_document.is_word_available()
                         else 'convert_failed')
+                    if os.path.exists(temp_pdf):
+                        try:
+                            os.remove(temp_pdf)
+                        except OSError:
+                            logger.warning(
+                                "Could not remove partial temp PDF %s",
+                                temp_pdf)
                     self.document_loaded.emit(False)
                     return False
                 self.source_word_path = path

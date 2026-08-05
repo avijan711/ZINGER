@@ -1433,6 +1433,7 @@ This half cannot run in WSL/CI. On the Windows machine (`C:\PySign`, `.venv\Scri
 1. Open a multi-page `.docx` via the file dialog → converts, renders, page count correct.
 2. Drag a `.docx` from Explorer onto the viewer → opens.
 3. Drag a Word attachment from Outlook onto the viewer → opens.
+3b. After dropping a Word attachment from Outlook, place a stamp and Sign → confirm both `_signed.pdf` and `_signed.docx` are produced.
 4. Place a stamp + a signature (one rotated, one semi-transparent) on page 2, click Sign → `<name>_signed.pdf` and `<name>_signed.docx` appear next to the original; open the docx in Word and confirm the images sit exactly where they were placed on screen.
 5. Legacy `.doc` input → output copy is `.docx`.
 6. Share via Email → Outlook draft has both attachments. Share Online → WhatsApp gets the PDF link.

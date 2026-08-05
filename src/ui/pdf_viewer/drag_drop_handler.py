@@ -1,4 +1,4 @@
-"""Handles drag and drop operations for PDF files"""
+"""Handles drag and drop operations for documents (PDF and Word)"""
 
 import os
 from PyQt6.QtCore import Qt, QTemporaryFile, QDir
@@ -30,8 +30,9 @@ def is_supported_document(filename: str) -> bool:
     """Whether the filename has an extension PySign can open."""
     return filename.lower().endswith(SUPPORTED_DOCUMENT_EXTENSIONS)
 
+
 class DragDropHandler:
-    """Handles drag and drop operations for PDF files"""
+    """Handles drag and drop operations for documents (PDF and Word)"""
     
     def __init__(self, pdf_handler):
         self.pdf_handler = pdf_handler
@@ -169,7 +170,13 @@ class DragDropHandler:
             if temp_file.open():
                 temp_file.write(data)
                 temp_file.close()
-                return self.pdf_handler.open_document(temp_file.fileName())
+                if self.pdf_handler.open_document(temp_file.fileName()):
+                    # Keep the temp file alive: source_word_path (for Word
+                    # documents) or the PDF itself may still be referenced
+                    # after this method returns (e.g. at sign/save time).
+                    temp_file.setAutoRemove(False)
+                    return True
+                return False
         except Exception as e:
             logger.error(f"Error saving temporary file: {e}")
             return False
