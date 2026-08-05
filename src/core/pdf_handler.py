@@ -1,11 +1,14 @@
 import fitz
 import os
 import logging
+import tempfile
+import uuid
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.image_processing import bake_rotation_opacity, rotated_bounding_size
+from core import word_document
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +41,40 @@ class PDFHandler(QObject):
         self.annotations: List[Annotation] = []
         self.undo_stack: List[Dict] = []
         self.redo_stack: List[Dict] = []
+        self.source_word_path: Optional[str] = None
+        self._temp_pdf_path: Optional[str] = None
+        self.last_open_error: Optional[str] = None
+        self.last_saved_paths: List[str] = []
+        self.word_writeback_failed: bool = False
 
     def open_document(self, path: str) -> bool:
-        """Open a PDF document and initialize it"""
+        """Open a PDF or Word document (Word files convert via Word COM)"""
         try:
-            self.document = fitz.open(path)
+            self.close_document()
+            self.last_open_error = None
+
+            pdf_path = path
+            if word_document.is_word_file(path):
+                temp_pdf = os.path.join(
+                    tempfile.gettempdir(), f"pysign_{uuid.uuid4().hex}.pdf")
+                if not word_document.convert_to_pdf(path, temp_pdf):
+                    self.last_open_error = (
+                        'word_missing'
+                        if not word_document.is_word_available()
+                        else 'convert_failed')
+                    self.document_loaded.emit(False)
+                    return False
+                self.source_word_path = path
+                self._temp_pdf_path = temp_pdf
+                pdf_path = temp_pdf
+
+            self.document = fitz.open(pdf_path)
             self.current_page = 0
             self.zoom_level = 1.0
             self.annotations = []
             self.undo_stack.clear()
             self.redo_stack.clear()
-            
+
             self.document_loaded.emit(True)
             self.page_changed.emit(0, len(self.document))
             return True
@@ -65,6 +91,18 @@ class PDFHandler(QObject):
             self.annotations = []
             self.undo_stack.clear()
             self.redo_stack.clear()
+        self.source_word_path = None
+        self._cleanup_temp_pdf()
+
+    def _cleanup_temp_pdf(self):
+        """Remove the temp PDF created for a Word document, if any."""
+        if self._temp_pdf_path and os.path.exists(self._temp_pdf_path):
+            try:
+                os.remove(self._temp_pdf_path)
+            except OSError:
+                logger.warning("Could not remove temp PDF %s",
+                               self._temp_pdf_path)
+        self._temp_pdf_path = None
 
     def get_page(self, page_number: int) -> Optional[fitz.Page]:
         """Get a specific page from the document"""
@@ -171,14 +209,11 @@ class PDFHandler(QObject):
         if not self.document:
             return None
 
-        original_path = self.document.name
-        base, ext = os.path.splitext(original_path)
-
-        # Ensure we're using .pdf extension
-        if not ext.lower() == '.pdf':
-            ext = '.pdf'
-
-        return f"{base}_signed{ext}"
+        # For Word-originated documents, name after the original file,
+        # not the temp conversion PDF
+        original_path = self.source_word_path or self.document.name
+        base, _ = os.path.splitext(original_path)
+        return f"{base}_signed.pdf"
 
     def get_annotation_placements(self) -> List[Tuple[int, Tuple[float, float, float, float], bytes]]:
         """Final (page, rect, png_bytes) per annotation, as saved to the PDF.
@@ -252,18 +287,38 @@ class PDFHandler(QObject):
             doc_copy.close()
 
             # Verify the saved file
+            saved_ok = False
             if os.path.exists(path):
                 try:
                     test_doc = fitz.open(path)
-                    if test_doc.is_pdf:
-                        test_doc.close()
-                        return True
+                    saved_ok = test_doc.is_pdf
                     test_doc.close()
+                except Exception:
+                    saved_ok = False
+                if not saved_ok and os.path.exists(path):
                     os.remove(path)
-                except:
-                    if os.path.exists(path):
-                        os.remove(path)
-                    return False
-            return False
-        except:
+            if not saved_ok:
+                return False
+
+            self.last_saved_paths = [path]
+            self.word_writeback_failed = False
+
+            # For Word-originated documents, also write a signed .docx copy.
+            # Failure here is non-fatal: the PDF is the authoritative output.
+            if self.source_word_path:
+                docx_path = os.path.splitext(path)[0] + '.docx'
+                placements = [
+                    (page, rect[0], rect[1],
+                     rect[2] - rect[0], rect[3] - rect[1], image_data)
+                    for page, rect, image_data
+                    in self.get_annotation_placements()
+                ]
+                if word_document.write_signatures_to_docx(
+                        self.source_word_path, docx_path, placements):
+                    self.last_saved_paths.append(docx_path)
+                else:
+                    self.word_writeback_failed = True
+
+            return True
+        except Exception:
             return False
